@@ -117,5 +117,14 @@ npm run seed:dev          # rebuilds the demo tenant against the live fixture
 node src/main.js --mode=all   # API :8080 + worker + scheduler + UI
 ```
 
+## 8. Repository
+
+The workspace is a git repository — initial commit `867ff83` ("Meridian Platform
+v1.0"), 154 tracked files, clean working tree. Runtime state (`data/`),
+dependencies and build output are ignored; the fixture's self-signed test
+certificates are committed as documented test infrastructure. Pushing to a
+remote activates `.github/workflows/ci.yml` (tests → client build → Windows and
+Linux desktop installers).
+
 **Gate result: PASS** — with the documented limitations above, which are visible in
 the matrix, the report, and the UI rather than hidden.
