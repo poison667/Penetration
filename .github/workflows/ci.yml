@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test suite (182 tests, zero deps)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Run test suite
+        run: npm test
+      - name: Generate test report (live numbers)
+        run: npm run report:tests
+      - name: Generate requirements coverage matrix (live counts)
+        run: npm run gen:matrix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verification-docs
+          path: |
+            docs/TEST_REPORT.md
+            docs/REQUIREMENTS_COVERAGE_MATRIX.csv
+
+  build-client:
+    name: Client SPA (React+TS → webroot)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Build client
+        run: |
+          npm --prefix apps/client install --no-audit --no-fund
+          npm --prefix apps/client run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webroot
+          path: webroot/
+
+  build-desktop:
+    name: Desktop installers (${{ matrix.os }})
+    needs: build-client
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            targets: nsis msi
+            label: windows
+          - os: ubuntu-22.04
+            targets: appimage deb rpm
+            label: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Build client SPA (shared with web)
+        run: |
+          npm --prefix apps/client install --no-audit --no-fund
+          npm --prefix apps/client run build
+      - name: Generate application icons
+        run: npm run gen:icons
+      - name: Build desktop installers
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: apps/desktop
+          args: --target all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: meridian-desktop-${{ matrix.label }}
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/**/*.exe
+            apps/desktop/src-tauri/target/release/bundle/**/*.msi
+            apps/desktop/src-tauri/target/release/bundle/**/*.AppImage
+            apps/desktop/src-tauri/target/release/bundle/**/*.deb
+            apps/desktop/src-tauri/target/release/bundle/**/*.rpm

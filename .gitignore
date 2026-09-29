@@ -1,0 +1,24 @@
+# dependencies (build-time only; backend has zero runtime deps)
+node_modules/
+apps/client/node_modules/
+
+# built artifacts (CI rebuilds them: npm --prefix apps/client run build)
+webroot/
+apps/client/dist/
+
+# runtime state — never commit tenant data, keys or ledgers
+data/
+*.log
+
+# desktop build output
+apps/desktop/src-tauri/target/
+
+# environment / secrets
+.env
+.env.*
+*.key
+!fixtures/vuln-app/certs/*.key
+
+# OS noise
+.DS_Store
+Thumbs.db

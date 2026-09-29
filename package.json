@@ -1,0 +1,43 @@
+{
+  "name": "meridian-platform",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Meridian \u2014 unified web audit, authorized security assessment, monitoring, data & AI operations platform (backend: zero-dependency Node.js; client: React+TypeScript; desktop: Tauri for Windows/Linux)",
+  "engines": {
+    "node": ">=20"
+  },
+  "imports": {
+    "#core/*": "./src/core/*.js",
+    "#store/*": "./src/store/*.js",
+    "#sec/*": "./src/security/*.js",
+    "#lib/*": "./src/engines/lib/*.js",
+    "#checks": "./src/engines/checks.js",
+    "#engines": "./src/engines/index.js",
+    "#webeng/*": "./src/engines/web/*.js",
+    "#seceng/*": "./src/engines/sec/*.js",
+    "#data/*": "./src/data/*.js",
+    "#docint/*": "./src/docint/*.js",
+    "#ai/*": "./src/ai/*.js",
+    "#report/*": "./src/report/*.js",
+    "#auto/*": "./src/automation/*.js",
+    "#queue/*": "./src/queue/*.js",
+    "#worker/*": "./src/worker/*.js",
+    "#api/*": "./src/api/*.js",
+    "#app/*": "./src/app/*.js",
+    "#seed/*": "./src/seed/*.js"
+  },
+  "scripts": {
+    "test": "node --test tests/",
+    "start": "node src/main.js --mode=all",
+    "start:api": "node src/main.js --mode=api",
+    "start:worker": "node src/main.js --mode=worker",
+    "seed:dev": "node src/seed/seed.js",
+    "fixture": "node fixtures/vuln-app/server.js",
+    "gen:matrix": "node scripts/gen-matrix.js",
+    "gen:icons": "node scripts/gen-icons.js",
+    "gen:certs": "bash scripts/gen-certs.sh",
+    "report:tests": "node scripts/gen-test-report.js",
+    "verify": "npm run report:tests && npm run gen:matrix && node scripts/verify-live.mjs"
+  }
+}

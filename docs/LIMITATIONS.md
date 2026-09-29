@@ -1,0 +1,18 @@
+# Known Limitations — Meridian Platform
+
+Explicit, honest limitations. Nothing here is a hidden simplification: each entry says
+what is NOT implemented, why, and what the platform does instead. Requirement rows in
+REQUIREMENTS_COVERAGE_MATRIX.csv cross-reference these IDs.
+
+| ID | Limitation | Status & detail |
+|----|-----------|-----------------|
+| **L-1** | **Automated scanning finds a subset of all issues.** | By nature. The platform reports *measured* findings with evidence and confidence, separates FACT from INFERENCE, and never claims exhaustive coverage. Methodology sections in every report state this. |
+| **L-2** | **Desktop installers are built by CI, not in this workspace.** | The Tauri 2 configuration (`apps/desktop`), the shared SPA, and the CI workflow targeting Windows (NSIS/MSI) and Linux (AppImage/deb/rpm) are real, but this sandbox has no Rust toolchain to produce binaries. See D4/C3. |
+| **L-3** | **OCR is not implemented.** | No OCR engine is available in the runtime (D1 forbids shelling out to an unavailable binary, and fabricating text would violate the no-fake-results rule). `extractText` returns `requires_ocr: true` for images; PDF text-layer and plain-text extraction are fully implemented. Requirement R-2.8 is Partial for this reason. |
+| **L-4** | **Browser-level rendering checks (real Chrome CWV / DOM screenshots) are out of runtime scope.** | No browser engine is embedded. Performance checks measure real server-side signals (TTFB, body bytes, caching, compression, asset weight budgets) and clearly label client-side CWV as inference. DOM/visual monitoring uses content hashing + keyword presence, not pixel diffing. |
+| **L-5** | **External notification channels (email/SMS) are adapters, not configured deliveries.** | In-app notifications (user inbox, workflow- and job-generated) are fully functional. SMTP/provider credentials are deployment configuration; no messages are claimed sent. |
+| **L-6** | **PDF writer is minimal by design (zero-dependency).** | PDF 1.4 with core Type1 fonts, headings, paragraphs, severity tables, pagination, and embedded sha256. No image embedding or custom fonts. HTML/XLSX/CSV/JSON reports carry the full fidelity. |
+| **L-7** | **AI analysis quality is bounded by the local provider.** | The default provider is a deterministic, evidence-grounded retriever-summarizer (BM25 + citation), not an LLM. It cannot fabricate (answers cite evidence and carry a grounded flag), but it is not as fluent as a hosted model. External providers plug in via configuration. |
+| **L-8** | **Data workbench operates on file-based datasets (CSV/XLSX/JSON), not federated databases.** | Upload → profile/cleanse/dedupe/transform/anomaly → download is fully implemented. Live database connectors are not part of this build. |
+| **L-9** | **Single-process deployment.** | API + worker share one process in `--mode=all` (or can be split). Horizontal scale-out (multiple workers on one store) is designed-for (lease-based queue) but not exercised at scale here. |
+| **L-10** | **Some security checks are profile-gated.** | Active/intrusive checks (raw-socket verb tampering, HTTP smuggling, overflow probes) only run in `standard`/`full` profiles against explicitly authorized assets, rate-limited, with destructive payloads blocked. Passive coverage still runs everywhere. This is a deliberate safety constraint, not a gap (D7). |
