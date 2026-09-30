@@ -482,3 +482,21 @@ defects were found by that first CI run and fixed in commit 7896316:
   not match `\r`): passed on Linux checkouts, failed 29/30 on windows-latest
   where git autocrlf converts to CRLF. Fixed with `\r?`-tolerant matching and
   a `.gitattributes` LF pin for the whole repo.
+
+Defect #40 was found after release, during the first real end-user deployment
+(Windows 11, Git Bash, Node v26.9.0), and is fixed in the working tree for the
+next patch release:
+
+- **#40 — POSIX-only bin-mode guard in the vulnerable-fixture server**
+  (`fixtures/vuln-app/server.js`): the direct-run check
+  `process.argv[1].endsWith('vuln-app/server.js')` compared a forward-slash
+  suffix, but Node on Windows resolves `argv[1]` to a backslash-separated
+  absolute path, so the guard evaluated false and `npm run fixture` exited
+  silently with no listeners and no output. Every pre-release gate passed
+  because CI (ubuntu/windows structural checks), the test suite (which imports
+  the module and calls `startFixture()` directly), and the Linux verification
+  sandbox all exercise forward-slash paths. Fixed by normalizing separators
+  before the comparison (`replace(/\\/g, '/')`); bin-mode re-validated on
+  Linux with the fix in place. `scripts/gen-icons.js` already used the correct
+  `path.resolve(argv[1]) === fileURLToPath(import.meta.url)` pattern and is
+  unaffected; a repo-wide scan found no other `argv[1]` string guards.

@@ -304,6 +304,11 @@ separately; back up `data/` (it is the entire state).
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `'tsc' is not recognized` (client build) | client dependencies never installed (step 2 skipped) | `npm --prefix apps/client install --no-audit --no-fund` |
+| `EACCES: permission denied 0.0.0.0:8080` (Windows) | wildcard bind blocked externally — port held by another process (SO_EXCLUSIVEADDRUSE), a winnat/Hyper-V reserved range, or a security-software filter driver. Never an elevation problem; loopback binds are typically unaffected | Diagnose: `netsh interface ipv4 show excludedportrange protocol=tcp` and `netstat -ano \| findstr ":8080"` (then `tasklist \| findstr <PID>`). Fastest fix for local use: `HOST=127.0.0.1 npm start` — loopback binding, also the correct posture for single-machine deployments |
+| `npm run fixture` exits silently, no `[fixture] …` line | defect #40: bin-mode guard compared a POSIX suffix against Windows' backslash `argv[1]` | fixed in-repo (path normalization). On the v1.0.0 tag, apply the one-line fix, or run zero-edit: `node -e "import('./fixtures/vuln-app/server.js').then(m => m.startFixture({ httpPort: 8081, tlsPort: 8082 }))"` |
+| Seed prints nothing after "enqueueing…" | expected — the 12 real engine jobs run first; per-job lines print only when all finish | wait for `[seed] done. …` (several minutes); do not interrupt; interrupted seeds self-heal via the durable queue (`reclaimStale`), but re-run `rm -rf data && npm run seed:dev` for the pristine demo state |
+| `npm error code ENOENT … package.json` | command run outside the repo (e.g. home dir) | `cd ~/Penetration` — every npm command runs from the repo root |
 | `GET /` returns no UI / JSON only | `webroot/` missing (client not built) | `npm --prefix apps/client run build` |
 | `EADDRINUSE :8080` | port occupied | `PORT=8081 npm start` (or free the port) |
 | Login 401 | no users yet (fresh clone never seeded) or wrong credentials | `npm run seed:dev`; or Register |

@@ -449,8 +449,9 @@ export function startFixture({ httpPort = 8081, tlsPort = null } = {}) {
   });
 }
 
-// bin mode
-if (process.argv[1] && process.argv[1].endsWith('vuln-app/server.js')) {
+// bin mode (normalize separators: Node on Windows resolves argv[1] to a
+// backslash-separated absolute path — defect #40, silent no-op on Windows)
+if (process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('vuln-app/server.js')) {
   const httpPort = Number(process.env.FIXTURE_HTTP_PORT || 8081);
   const tlsPort = Number(process.env.FIXTURE_TLS_PORT || 8082);
   startFixture({ httpPort, tlsPort }).then(() => {
