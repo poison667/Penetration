@@ -120,7 +120,7 @@ export const SERVICE_CATALOG = [
 
   // ---- Document intelligence ----
   { key: 'doc_extract', name: 'Document Text Extraction', category: 'documents', engine: 'doc_extract',
-    description: 'Text-layer extraction for TXT/MD/CSV/JSON/HTML/PDF; OCR via provider adapter when available.',
+    description: 'Text-layer extraction for TXT/MD/CSV/JSON/HTML/PDF; images via real OCR (tesseract.js WASM or system tesseract, probed at runtime — status reported honestly when unavailable).',
     params: [{ key: 'document_id', label: 'Document ID', type: 'string' }], base_credits: 5, profiles: ['passive'], outputs: 'Extracted text + metadata + SHA-256' },
   { key: 'doc_compare', name: 'Document Comparison', category: 'documents', engine: 'doc_compare',
     description: 'Line-level LCS diff and word-level statistics between two documents.',

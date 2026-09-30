@@ -108,6 +108,25 @@ async function main() {
     }
   }
 
+  // document intelligence: real OCR on a committed sample image (end-to-end through the API)
+  {
+    const { readFileSync } = await import('node:fs');
+    const png = readFileSync('tests/fixtures/ocr-sample.png');
+    const fd = new FormData();
+    fd.append('file', new Blob([png], { type: 'image/png' }), 'ocr-sample.png');
+    const up = await fetch(`${B}/api/v1/documents`, { method: 'POST', headers: H, body: fd });
+    const upJson = await up.json().catch(() => ({}));
+    if (up.status === 201 && upJson.document?.id) {
+      const ext = await (await fetch(`${B}/api/v1/documents/${upJson.document.id}/extract`, { method: 'POST', headers: { ...H, 'content-type': 'application/json' }, body: '{}' })).json();
+      const text = String(ext.text_preview || '');
+      const ok = ext.ocr?.engine && /MERIDIAN OCR 4217|4217/.test(text);
+      check('document OCR (real engine, live pipeline)', !!ok, ok ? `engine ${ext.ocr.engine}, extracted "${text.trim().slice(0, 40)}"` : `no/failed OCR: ${JSON.stringify(ext).slice(0, 120)}`);
+      await fetch(`${B}/api/v1/documents/${upJson.document.id}`, { method: 'DELETE', headers: H }).catch(() => {});
+    } else {
+      check('document OCR (real engine, live pipeline)', false, `upload failed: ${up.status}`);
+    }
+  }
+
   // fixture (the authorized test target) reachable when running
   try {
     const fx = await fetch(`${FIXTURE}/`, { signal: AbortSignal.timeout(2000) });

@@ -1,13 +1,16 @@
 import zlib from 'node:zlib';
 import { htmlToText } from '#lib/html';
+import { ocrProviderInfo, ocrImage } from '#docint/ocr';
 
 /**
  * Document text extraction.
  * - TXT/MD/CSV/JSON: direct
  * - HTML: DOM-based text extraction
  * - PDF: text-layer extraction (objects → streams → inflate → text-showing operators)
- * - Images/scanned PDFs: requires an OCR provider adapter (probed at runtime,
- *   status reported honestly when unavailable)
+ * - Images: real OCR when an engine is available (extractTextAsync); the sync
+ *   extractText reports requires_ocr honestly when none is
+ * - Scanned PDFs (no text layer): page rasterization is not available — reported
+ *   honestly; OCR covers image formats
  */
 export function extractText(buffer, mime, name = '') {
   const ext = (name.split('.').pop() || '').toLowerCase();
@@ -25,12 +28,36 @@ export function extractText(buffer, mime, name = '') {
   }
   // images and unknown binary types need OCR
   if (mime?.startsWith('image/') || ext === 'png' || ext === 'jpg' || ext === 'jpeg' || ext === 'tiff' || ext === 'webp') {
-    return { text: null, method: 'none', requires_ocr: true, ocr_available: false, pages: null, note: 'OCR provider not configured in this deployment (see docs/LIMITATIONS.md)' };
+    return { text: null, method: 'none', requires_ocr: true, ocr_available: false, pages: null, note: 'image content — run text extraction (OCR provider is probed at runtime); see docs/LIMITATIONS.md' };
   }
   if (mime === 'application/zip' || ext === 'zip' || mime?.startsWith('application/vnd.openxmlformats') || ext === 'docx' || ext === 'xlsx') {
     return { text: null, method: 'none', requires_ocr: false, pages: null, note: 'OOXML container — extraction adapter not active in this deployment; stored as binary with SHA-256' };
   }
   return { text: buffer.toString('utf8'), method: 'raw_text', pages: 1 };
+}
+
+/**
+ * Async extraction with real OCR for images. Mirrors extractText for every
+ * synchronous format; images additionally go through the OCR provider when one
+ * is available. Failures and absences are reported — text is never fabricated.
+ */
+export async function extractTextAsync(buffer, mime, name = '') {
+  const base = extractText(buffer, mime, name);
+  if (!base.requires_ocr) return base;
+  const provider = await ocrProviderInfo();
+  if (!provider.available) return base; // honest: no engine, no text
+  try {
+    const r = await ocrImage(buffer);
+    const text = r.text.trim();
+    if (!text) return { ...base, ocr_available: true, ocr_engine: r.engine, note: 'OCR engine returned no text (image may contain none)' };
+    return {
+      text, method: `ocr:${r.engine}`, pages: 1, requires_ocr: false, ocr_available: true,
+      ocr_engine: r.engine, ocr_confidence: r.confidence,
+      note: `OCR via ${r.engine}${r.confidence !== null ? ` (mean confidence ${r.confidence.toFixed(0)})` : ''}`,
+    };
+  } catch (e) {
+    return { ...base, ocr_available: true, ocr_engine: provider.engine, note: `OCR failed: ${String(e?.message || e).slice(0, 200)}` };
+  }
 }
 
 /** PDF text-layer extraction (FlateDecode + text operators). */

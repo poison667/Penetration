@@ -1,17 +1,17 @@
 # Test Report — Meridian Platform
 
-Generated **live** by `npm run report:tests` (2026-09-30T10:05:47.762Z); nothing below is hand-maintained.
+Generated **live** by `npm run report:tests` (2026-09-30T11:26:31.745Z); nothing below is hand-maintained.
 
 ## Result
 
 | Metric | Value |
 |---|---|
-| Test files | 28 |
-| Tests | 194 |
-| **Passing** | **194** |
+| Test files | 29 |
+| Tests | 203 |
+| **Passing** | **203** |
 | Failing | 0 |
 | Cancelled / skipped | 0 / 0 |
-| Wall time | 69.0s |
+| Wall time | 68.5s |
 | Runner | `node --test` (Node built-in, zero test dependencies) |
 
 > ✅ **ALL PASSING**
@@ -21,30 +21,31 @@ Generated **live** by `npm run report:tests` (2026-09-30T10:05:47.762Z); nothing
 | File | Tests | Pass | Fail | Time |
 |---|---|---|---|---|
 | `ai-rag.test.js` | 6 | 6 | 0 | 0.1s |
-| `api-authn.test.js` | 6 | 6 | 0 | 0.6s |
-| `api-server.test.js` | 4 | 4 | 0 | 2.1s |
-| `api-sse.test.js` | 1 | 1 | 0 | 0.9s |
-| `app-audit.test.js` | 6 | 6 | 0 | 0.2s |
+| `api-authn.test.js` | 6 | 6 | 0 | 0.3s |
+| `api-server.test.js` | 5 | 5 | 0 | 1.8s |
+| `api-sse.test.js` | 1 | 1 | 0 | 0.7s |
+| `app-audit.test.js` | 6 | 6 | 0 | 0.1s |
 | `app-billing.test.js` | 8 | 8 | 0 | 0.1s |
 | `app-db.test.js` | 7 | 7 | 0 | 0.1s |
 | `automation-cron.test.js` | 7 | 7 | 0 | 0.1s |
-| `automation-workflow.test.js` | 4 | 4 | 0 | 0.2s |
+| `automation-workflow.test.js` | 4 | 4 | 0 | 0.1s |
 | `core-expr.test.js` | 12 | 12 | 0 | 0.1s |
 | `core-util.test.js` | 14 | 14 | 0 | 0.1s |
 | `core-validate.test.js` | 18 | 18 | 0 | 0.1s |
 | `data-workbench.test.js` | 10 | 10 | 0 | 0.1s |
-| `docint.test.js` | 8 | 8 | 0 | 0.2s |
+| `docint-ocr.test.js` | 8 | 8 | 0 | 1.6s |
+| `docint.test.js` | 8 | 8 | 0 | 0.1s |
 | `engines-checks.test.js` | 6 | 6 | 0 | 0.1s |
 | `engines-framework.test.js` | 5 | 5 | 0 | 0.1s |
-| `integration-pipeline.test.js` | 1 | 1 | 0 | 62.2s |
+| `integration-pipeline.test.js` | 1 | 1 | 0 | 62.1s |
 | `lib-crawl.test.js` | 2 | 2 | 0 | 0.1s |
 | `lib-csv.test.js` | 6 | 6 | 0 | 0.1s |
 | `lib-html.test.js` | 8 | 8 | 0 | 0.1s |
-| `notify-delivery.test.js` | 8 | 8 | 0 | 0.3s |
+| `notify-delivery.test.js` | 8 | 8 | 0 | 0.2s |
 | `queue.test.js` | 6 | 6 | 0 | 0.1s |
 | `report-engine.test.js` | 4 | 4 | 0 | 0.1s |
 | `report-pdf.test.js` | 4 | 4 | 0 | 0.1s |
-| `security-crypto.test.js` | 8 | 8 | 0 | 0.3s |
+| `security-crypto.test.js` | 8 | 8 | 0 | 0.2s |
 | `security-net-http.test.js` | 13 | 13 | 0 | 0.1s |
 | `store-store.test.js` | 7 | 7 | 0 | 0.1s |
 | `store-wal.test.js` | 5 | 5 | 0 | 0.1s |

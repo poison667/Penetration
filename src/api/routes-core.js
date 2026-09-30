@@ -230,7 +230,7 @@ export function registerCoreRoutes(router, app) {
   router.post('/api/v1/requests', async (ctx) => {
     requireAuth(['requests:write'])(ctx);
     const body = validate({
-      service: V.string({ min: 2, max: 40 }), asset_id: V.string({ min: 2, max: 60 }),
+      service: V.string({ min: 2, max: 40 }), asset_id: V.string({ min: 2, max: 60 }).optional(), // asset-less services (documents, data, AI) omit it
       params: V.record(V.any()).optional(),
     }, ctx.body);
     const { job } = createServiceRequest({ db, tenantId: ctx.tid, serviceKey: body.service, assetId: body.asset_id, params: body.params || {}, userId: ctx.auth.user.id });

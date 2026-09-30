@@ -142,9 +142,17 @@ export function DocumentsView() {
     try { const j = await api<{ integrity_ok: boolean; expected_sha256: string; actual_sha256: string }>(`/api/v1/documents/${d.id}/verify`); toast(j.integrity_ok ? 'Integrity verified' : 'INTEGRITY MISMATCH', j.integrity_ok ? 'ok' : 'err'); }
     catch (e: any) { toast(e.message, 'err'); }
   };
+  const extract = async (d: any) => {
+    try {
+      const j = await api<{ document: any; text_preview: string; ocr: { engine: string } | null }>(`/api/v1/documents/${d.id}/extract`, { method: 'POST', body: {} });
+      toast(j.ocr ? `Extracted via ${j.ocr.engine}: ${j.document.text_chars} chars` : `Extraction (${j.document.extraction_method}): ${j.document.text_chars} chars`);
+      docs.refresh();
+      if (sel?.id === d.id) detail.refresh();
+    } catch (e: any) { toast(e.message, 'err'); }
+  };
   return (
     <>
-      <PageHead title="Document vault" desc="Text extraction, integrity verification and comparison. Images report requires_ocr honestly — text is never fabricated."
+      <PageHead title="Document vault" desc="Text extraction, integrity verification and comparison. Images run through a real OCR engine when one is available (probed at runtime) — otherwise the status is reported honestly, never fabricated."
         actions={<><input ref={fileRef} type="file" style={{ display: 'none' }} onChange={(e) => e.target.files?.[0] && void uploadDoc(e.target.files[0])} /><button className="primary" onClick={() => fileRef.current?.click()}>Upload document</button></>} />
       <Err error={docs.error} />
       <Panel pad={false}>
@@ -160,6 +168,7 @@ export function DocumentsView() {
             { key: 'created', label: 'Uploaded', render: (d: any) => fmt.dt(d.created_at) },
             { key: 'act', label: '', render: (d: any) => (
               <span style={{ display: 'flex', gap: 4 }} onClick={(e) => e.stopPropagation()}>
+                <button className="sm" onClick={() => void extract(d)}>Extract</button>
                 <button className="sm" onClick={() => void verify(d)}>Verify</button>
                 <button className="sm" onClick={() => setSel(d)}>Open</button>
               </span>
@@ -174,9 +183,10 @@ export function DocumentsView() {
             ['sha256', <span className="mono">{(detail.data as any)?.document?.sha256 || sel.sha256}</span>],
             ['Extraction method', (detail.data as any)?.document?.extraction_method || '—'],
             ['Size', fmt.bytes((detail.data as any)?.document?.size_bytes || sel.size_bytes)],
+            ...((detail.data as any)?.document?.extraction_note ? [['Note', (detail.data as any).document.extraction_note] as [string, React.ReactNode]] : []),
           ]} />
           <div className="section-label">Extracted text</div>
-          {(detail.data as any)?.text_preview ? <CodeBlock text={(detail.data as any).text_preview} /> : <div className="empty">No text layer (image-only documents need OCR, which reports honestly rather than fabricating text).</div>}
+          {(detail.data as any)?.text_preview ? <CodeBlock text={(detail.data as any).text_preview} /> : <div className="empty">No text extracted yet — run Extract (images are read by a real OCR engine when available; absence or failure is reported, never fabricated).</div>}
           <div style={{ marginTop: 10 }}>
             <a href={`/api/v1/documents/${sel.id}/download`} target="_blank" rel="noreferrer">Download original</a>
           </div>

@@ -5,15 +5,15 @@ was performed on the workspace at `/home/user/meridian` (Node v20.20.2, Linux).
 
 ## 1. Automated suite
 
-- `npm test` → **194/194 passing, 28 files, ~70s** (live-generated breakdown: `docs/TEST_REPORT.md`).
+- `npm test` → **203/203 passing, 29 files, ~70s** (live-generated breakdown: `docs/TEST_REPORT.md`).
 - Verification as a whole (suite + live probes + real browser + oracle audits) found
-  and fixed **27 real defects** in production source: 9 by the suite (tokenizer loop,
+  and fixed **31 real defects** in production source: 9 by the suite (tokenizer loop,
   ledger ordering, xlsx rels path, 3 cron defects, RAG chunk loss, session-family
   revocation, binary secret sealing, api-keys `require()` 500, dedupe null-key
   crash), 2 by real-browser verification (BillingView React-tree crash, missing
   evidence-list route), 4 by the validation-oracle audit (§3b4), 8 by the
-  full-catalog oracle audit (§3b5), and 4 by the notification-delivery audit
-  (§3b6). Details: TEST_REPORT.md + §3b3–§3b6 below.
+  full-catalog oracle audit (§3b5), 4 by the notification-delivery audit (§3b6),
+  and 4 by the OCR audit (§3b7). Details: TEST_REPORT.md + §3b3–§3b7 below.
 
 ## 2. End-to-end pipeline (no mocks)
 
@@ -168,6 +168,45 @@ This round exposed **four more real defects** (all fixed, all re-verified):
 
 SMS delivery is deliberately not stubbed: carrier credentials are external
 deployment configuration (limitation L-5).
+
+## 3b7. OCR audit: real engine, proven live, crash-contained
+
+R-2.8 ("OCR where supported") was closed with a real engine instead of a stub.
+`extractTextAsync` routes images through a runtime-probed OCR provider:
+`tesseract.js` (optional WASM dependency, language data vendored in
+`vendor/tessdata/` for offline operation) or a system `tesseract` binary; when
+neither exists the platform reports `requires_ocr` honestly and extracts
+nothing. Verified four ways: unit tests on a committed sample image
+(`tests/fixtures/ocr-sample.png`, deterministically regenerable via
+`scripts/gen-ocr-fixture.mjs` — the engine reads exactly "MERIDIAN OCR 4217",
+confidence 80, reproducible across runs), API-surface tests (multipart upload →
+inline extraction → RBAC), an engine-crash containment test (undecodable bytes
+must not kill the process), and **live check #15** (upload + extract through
+the running API). The document vault UI gained an Extract action; the
+`doc_extract` service runs OCR through the same code path in the job pipeline.
+
+This round exposed **four more real defects** (fixed):
+- **tesseract.js crashes the host process on undecodable images** — its worker
+  'error' handler re-throws via `process.nextTick`, so a malformed upload would
+  take down the API server (a denial-of-service from user input). The engine now
+  runs in a dedicated worker thread: a decode crash kills only the thread and
+  the failure is reported honestly. A test proves recovery (valid OCR succeeds
+  after a crash).
+- **a persistent engine thread kept processes alive at exit even after
+  `Worker#unref()`** (verified on Node 20: a worker thread with a live message
+  listener blocks process exit). First attempt (persistent thread + unref) hung
+  the whole test suite invisibly; the engine now uses a disposable per-job
+  thread that is terminated as soon as its result or crash is observed — no
+  handles outlive the call.
+- **the test-report generator silently swallowed killed test processes**: a file
+  that timed out produced no TAP summary, contributed zero tests, and the report
+  still read green while the suite had actually hung (the first verify run
+  "passed" 190/190 in 666s with one file killed). The generator now fails loudly
+  on any file without a TAP summary.
+- **`POST /api/v1/requests` required `asset_id` unconditionally**, making every
+  asset-less service (documents, data workbench, AI) unrequestable through the
+  API even though `createServiceRequest` explicitly exempts them. `asset_id` is
+  now optional; the per-service requirement is enforced server-side.
 
 ## 3b2. Live client↔server contract probe
 

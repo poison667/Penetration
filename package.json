@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Meridian \u2014 unified web audit, authorized security assessment, monitoring, data & AI operations platform (backend: zero-dependency Node.js; client: React+TypeScript; desktop: Tauri for Windows/Linux)",
+  "description": "Meridian — unified web audit, authorized security assessment, monitoring, data & AI operations platform (backend: zero-dependency Node.js; client: React+TypeScript; desktop: Tauri for Windows/Linux)",
   "engines": {
     "node": ">=20"
   },
@@ -39,5 +39,8 @@
     "gen:certs": "bash scripts/gen-certs.sh",
     "report:tests": "node scripts/gen-test-report.js",
     "verify": "npm run report:tests && npm run gen:matrix && node scripts/verify-live.mjs"
+  },
+  "optionalDependencies": {
+    "tesseract.js": "^7.0.0"
   }
 }

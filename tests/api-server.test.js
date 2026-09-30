@@ -7,7 +7,7 @@ import { createServer } from '#api/server';
 import { hashPassword } from '#sec/crypto';
 import { totpNow, base32Decode, setSecretKey } from '#sec/crypto';
 import crypto from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -265,6 +265,57 @@ test('API server: webhook + email channel registry (RBAC, SSRF guard, secret hyg
   } finally {
     h.server.close();
     h.store.close();
+    rmSync(h.dir, { recursive: true, force: true });
+  }
+});
+
+test('API server: document OCR — upload image, extract text, request without asset', async () => {
+  const h = await startApi();
+  try {
+    const port = h.server.address().port;
+    const login = await api(port, '/api/v1/auth/login', { method: 'POST', body: { email: 'owner@x.co', password: 'Owner!Pass1A' } });
+    const ownerTok = login.json.access_token || login.json.accessToken;
+    const { ocrProviderInfo } = await import('#docint/ocr');
+    const provider = await ocrProviderInfo();
+    const png = readFileSync('tests/fixtures/ocr-sample.png');
+
+    // multipart upload (field "file")
+    const fd = new FormData();
+    fd.append('file', new Blob([png], { type: 'image/png' }), 'ocr-sample.png');
+    fd.append('tags', 'ocr-test');
+    const up = await fetch(`http://127.0.0.1:${port}/api/v1/documents`, { method: 'POST', headers: { authorization: `Bearer ${ownerTok}` }, body: fd });
+    const upJson = await up.json().catch(() => ({}));
+    assert.equal(up.status, 201, JSON.stringify(upJson));
+    const doc = upJson.document;
+    assert.ok(doc.id, 'document stored');
+    assert.equal(doc.requires_ocr, true, 'upload marks images requires_ocr (extraction runs separately)');
+
+    // inline extraction: real OCR when the engine is installed, honest absence otherwise
+    const ext = await api(port, `/api/v1/documents/${doc.id}/extract`, { method: 'POST', token: ownerTok, body: {} });
+    assert.equal(ext.status, 200, JSON.stringify(ext.json));
+    if (provider.available) {
+      assert.ok(ext.json.ocr && ext.json.ocr.engine, 'ocr metadata present');
+      assert.match(ext.json.document.extraction_method, /^ocr:/);
+      assert.ok(/MERIDIAN OCR 4217|4217/.test(String(ext.json.text_preview || '')), `OCR text preview: ${JSON.stringify(ext.json.text_preview)}`);
+    } else {
+      assert.equal(ext.json.document.requires_ocr, true, 'absence reported, not faked');
+      assert.equal((ext.json.text_preview || '').length, 0);
+    }
+
+    // document services are asset-less: request without asset_id now works
+    const req = await api(port, '/api/v1/requests', { method: 'POST', token: ownerTok, body: { service: 'doc_extract', params: { document_id: doc.id } } });
+    assert.equal(req.status, 202, JSON.stringify(req.json));
+    assert.ok(req.json.job_id, 'job queued without an asset');
+
+    // viewer may read documents but not write extraction
+    const vlogin = await api(port, '/api/v1/auth/login', { method: 'POST', body: { email: 'viewer@x.co', password: 'Viewer!Pass1A' } });
+    const viewerTok = vlogin.json.access_token || vlogin.json.accessToken;
+    assert.equal((await api(port, '/api/v1/documents', { token: viewerTok })).status, 200, 'viewer may list documents');
+    assert.equal((await api(port, `/api/v1/documents/${doc.id}/extract`, { method: 'POST', token: viewerTok, body: {} })).status, 403, 'viewer must not run extraction');
+
+    h.server.close();
+    h.store.close();
+  } finally {
     rmSync(h.dir, { recursive: true, force: true });
   }
 });

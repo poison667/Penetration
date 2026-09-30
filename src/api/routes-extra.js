@@ -9,7 +9,8 @@ import { validateWebhookUrl } from '#app/webhooks';
 import { runMonitor } from '#worker/monitors';
 import { parseCron, nextRun } from '#auto/cron';
 import { saveWorkflow, runWorkflow } from '#auto/workflow';
-import { extractText } from '#docint/extract';
+import { extractText, extractTextAsync } from '#docint/extract';
+import { ocrProviderInfo } from '#docint/ocr';
 import { sha256, nowIso } from '#core/util';
 import { parseMultipart, sniffMagic, sanitizeFilename } from '#sec/http';
 import { resolveProvider } from '#ai/providers';
@@ -204,7 +205,13 @@ export function registerExtraRoutes(router, app) {
       throw badRequest('content does not match declared type');
     }
     const rec = files.put(ctx.tid, up.data, { name, mime: up.contentType || 'application/octet-stream', meta: { kind: 'document' } });
-    const extraction = extractText(up.data, up.contentType, name);
+    let extraction = extractText(up.data, up.contentType, name);
+    if (extraction.requires_ocr) {
+      const provider = await ocrProviderInfo(); // note only — OCR itself runs via the extract route / doc_extract job (uploads stay fast)
+      extraction = provider.available
+        ? { ...extraction, note: `image content — OCR available (${provider.detail}); run extraction to read it` }
+        : { ...extraction, note: `image content — ${provider.detail}` };
+    }
     const doc = db.insert('documents', {
       tenant_id: ctx.tid, file_id: rec.id, name, mime: up.contentType || 'application/octet-stream',
       size: up.data.length, sha256: rec.sha256,
@@ -237,6 +244,19 @@ export function registerExtraRoutes(router, app) {
     if (!doc) throw notFound('document not found');
     const result = files.verify(ctx.tid, doc.file_id);
     ctx.respond(200, { integrity_ok: result.ok, expected_sha256: result.expected, actual_sha256: result.actual });
+  });
+  router.post('/api/v1/documents/:id/extract', async (ctx) => {
+    requireAuth(ctx, ['documents:write']);
+    const doc = db.byId('documents', ctx.tid, ctx.params.id);
+    if (!doc) throw notFound('document not found');
+    if (doc.size > 4 * 1024 * 1024) throw badRequest('document exceeds the 4MB inline-extraction limit — request the doc_extract service for large files');
+    const buf = files.read(ctx.tid, doc.file_id);
+    const extraction = await extractTextAsync(buf, doc.mime, doc.name); // real OCR for images when an engine is available
+    const text = extraction.text || '';
+    const updated = { ...doc, extracted_text: text.slice(0, 2_000_000), text_chars: text.length, extraction_method: extraction.method, extraction_note: extraction.note || null, requires_ocr: !!extraction.requires_ocr, extracted_text_sha256: text ? sha256(text) : null, extracted_at: new Date().toISOString() };
+    db.store.put('documents', updated);
+    recordAudit(db.store, { tenantId: ctx.tid, actorType: 'user', actorId: ctx.auth.user.id, action: 'document.extracted', resource: 'document', resourceId: doc.id, detail: { method: extraction.method, chars: text.length } });
+    ctx.respond(200, { document: docSummary(updated), text_preview: text.slice(0, 2000), ocr: extraction.ocr_available ? { engine: extraction.ocr_engine, confidence: extraction.ocr_confidence ?? null } : null });
   });
   router.get('/api/v1/documents/:id/download', async (ctx) => {
     requireAuth(ctx, ['documents:read']);

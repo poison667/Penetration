@@ -4,7 +4,7 @@ import { cleanse } from '#data/cleanse';
 import { dedupe } from '#data/dedup';
 import { transform } from '#data/transform';
 import { detectAnomalies } from '#data/anomaly';
-import { extractText } from '#docint/extract';
+import { extractTextAsync } from '#docint/extract';
 import { compareDocuments } from '#docint/diff';
 import { chunkText, BM25Index } from '#ai/rag';
 import { assessReadiness } from '#ai/readiness';
@@ -86,7 +86,7 @@ export async function runDocService(db, files, job, service, params) {
       const doc = db.byId('documents', job.tenant_id, params.document_id);
       if (!doc) throw notFound('document not found');
       const buf = files.read(job.tenant_id, doc.file_id);
-      const extraction = extractText(buf, doc.mime, doc.name);
+      const extraction = await extractTextAsync(buf, doc.mime, doc.name); // real OCR for images when an engine is available
       const text = extraction.text || '';
       const updated = { ...doc, extracted_text: text.slice(0, 2_000_000), text_chars: text.length, extraction_method: extraction.method, extraction_note: extraction.note || null, requires_ocr: !!extraction.requires_ocr, extracted_text_sha256: text ? sha256(text) : null, extracted_at: new Date().toISOString() };
       db.store.put('documents', updated);

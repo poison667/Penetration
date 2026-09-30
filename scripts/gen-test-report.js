@@ -30,6 +30,14 @@ for (const f of files) {
     fail: num(/^# fail (\d+)$/m),
     ms: num(/^# duration_ms (\d+(\.\d+)?)$/m),
   };
+  // Integrity guard: a killed/crashed test process produces no TAP summary —
+  // that must surface as a FAILURE, never silently undercount as "green".
+  if (!/^# tests \d+$/m.test(tap)) {
+    st.tests = 1; st.fail = 1;
+    perFile.push({ ...st, file: `${f} — NO TAP SUMMARY (process killed or timed out)` });
+    total += 1; fail += 1;
+    continue;
+  }
   total += st.tests; pass += st.pass; fail += st.fail; duration += st.ms;
   cancelled += num(/^# cancelled (\d+)$/m);
   skipped += num(/^# skipped (\d+)$/m);
