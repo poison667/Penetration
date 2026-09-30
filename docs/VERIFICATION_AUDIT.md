@@ -5,14 +5,15 @@ was performed on the workspace at `/home/user/meridian` (Node v20.20.2, Linux).
 
 ## 1. Automated suite
 
-- `npm test` → **185/185 passing, 27 files, ~37s** (live-generated breakdown: `docs/TEST_REPORT.md`).
+- `npm test` → **194/194 passing, 28 files, ~70s** (live-generated breakdown: `docs/TEST_REPORT.md`).
 - Verification as a whole (suite + live probes + real browser + oracle audits) found
-  and fixed **23 real defects** in production source: 9 by the suite (tokenizer loop,
+  and fixed **27 real defects** in production source: 9 by the suite (tokenizer loop,
   ledger ordering, xlsx rels path, 3 cron defects, RAG chunk loss, session-family
   revocation, binary secret sealing, api-keys `require()` 500, dedupe null-key
   crash), 2 by real-browser verification (BillingView React-tree crash, missing
-  evidence-list route), 4 by the validation-oracle audit (§3b4), and 8 by the
-  full-catalog oracle audit (§3b5). Details: TEST_REPORT.md + §3b3–§3b5 below.
+  evidence-list route), 4 by the validation-oracle audit (§3b4), 8 by the
+  full-catalog oracle audit (§3b5), and 4 by the notification-delivery audit
+  (§3b6). Details: TEST_REPORT.md + §3b3–§3b6 below.
 
 ## 2. End-to-end pipeline (no mocks)
 
@@ -128,6 +129,45 @@ README: 5 backend-signature VAL checks (LDAP/ORM/XPath/IMAP/NoSQL), VAL-004
 negatives on a Node target), SES-011 (deliberate trade-off — would conflict
 with the SES-010 sequential-token oracle; the equivalent flaw is proven by
 SES-012), and REC-009 (needs a domain-like asset, not `localhost`).
+
+## 3b6. External notification delivery audit: webhooks + email proven live
+
+R-2.15 (external notification channels) was closed with a real delivery stack:
+`notify()` now fans every notification out to a persisted outbox
+(`notify_deliveries`), and the scheduler tick flushes it — webhooks as
+HMAC-SHA256-signed POSTs (`x-meridian-signature: sha256=HMAC(secret,
+`${'{timestamp}'}.${'{body}'})`), email as a real RFC-5321 SMTP client
+(EHLO → MAIL FROM → RCPT TO → DATA → QUIT) against the configured relay.
+Retries use 15/60/300s backoff (max 3 attempts) and every attempt is visible in
+the deliveries log. Verified three ways: **unit/integration tests** (loopback HTTP
+receiver asserting the signature byte-for-byte; loopback SMTP server asserting
+envelope + body; clock-injected retry/backoff tests — `tests/notify-delivery.test.js`,
+8 tests), **API-surface tests** (anon 401, RBAC 403, SSRF guard on private URLs,
+secret shown exactly once and stripped everywhere, audit trail —
+`tests/api-server.test.js`), and **live check #14** in `scripts/verify-live.mjs`,
+which spins an ephemeral receiver, registers a webhook through the real API,
+triggers a test delivery, and asserts the received POST's HMAC signature against
+the creation-time secret.
+
+This round exposed **four more real defects** (all fixed, all re-verified):
+- **Event filters never matched their own prefix syntax** — the matcher tested
+  `startsWith(e + '.')`, so a filter of `job.` became `job..` and matched nothing
+  (exact matches still worked, hiding the bug).
+- **The webhook event header was a hardcoded constant** (`x-meridian-event:
+  notification`) instead of the notification type — receivers could not filter by
+  event. Found by live check #14: the delivery succeeded, the signature verified,
+  but the event header carried no information.
+- **Route shadowing**: the new delivery-webhook routes registered the same paths
+  (`/api/v1/webhooks`) as the older automation-trigger webhook registry; with
+  first-match routing the new routes were unreachable dead code. Resolved by
+  re-pathing the automation registry to `/api/v1/automation/webhooks` (decision
+  D24) — both features fully preserved.
+- **The API rate limiter was module-global**: separate server instances (exactly
+  what tests create, and what multi-process deployments run) shared login buckets,
+  cross-contaminating throttling. Now scoped per server instance.
+
+SMS delivery is deliberately not stubbed: carrier credentials are external
+deployment configuration (limitation L-5).
 
 ## 3b2. Live client↔server contract probe
 

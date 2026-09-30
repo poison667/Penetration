@@ -1,6 +1,6 @@
 /** Business views: marketplace, requests, reports, billing, notifications, support. */
-import React, { useState } from 'react';
-import { api, fmt, Service, Plan, Asset, Job, Report, Invoice, Notification, Ticket } from '../api';
+import React, { useState, useEffect } from 'react';
+import { api, fmt, Service, Plan, Asset, Job, Report, Invoice, Notification, Ticket, Webhook, WebhookDelivery, EmailChannel } from '../api';
 import { useApp } from '../state';
 import { Panel, PageHead, Stat, DataTable, StateBadge, Badge, Field, Modal, KV, useAsync, Err, EmptyGate } from '../ui';
 
@@ -248,7 +248,7 @@ export function NotificationsView() {
   const markOne = async (n: Notification) => { try { await api(`/api/v1/notifications/${n.id}/read`, { method: 'POST', body: {} }); notes.refresh(); } catch { /* */ } };
   return (
     <>
-      <PageHead title="Notifications" desc="Job completions, monitor state changes and workflow events."
+      <PageHead title="Notifications" desc="In-app notifications plus external delivery channels (signed webhooks, SMTP email)."
         actions={<button onClick={markAll}>Mark all read</button>} />
       <Err error={notes.error} />
       <Panel pad={false}>
@@ -264,6 +264,139 @@ export function NotificationsView() {
           ]}
         />
       </Panel>
+      <DeliveryChannelsView />
+    </>
+  );
+}
+
+/* ---------------------- External delivery channels ----------------------- */
+export function DeliveryChannelsView() {
+  const { toast } = useApp();
+  const hooks = useAsync(() => api<{ webhooks: Webhook[] }>('/api/v1/webhooks'), []);
+  const email = useAsync(() => api<{ email_channel: EmailChannel | null }>('/api/v1/settings/email'), []);
+  const [creating, setCreating] = useState(false);
+  const [url, setUrl] = useState('');
+  const [events, setEvents] = useState('*');
+  const [allowPrivate, setAllowPrivate] = useState(false);
+  const [created, setCreated] = useState<Webhook | null>(null);
+  const [deliveriesFor, setDeliveriesFor] = useState<Webhook | null>(null);
+  const deliveries = useAsync(() => deliveriesFor ? api<{ deliveries: WebhookDelivery[] }>(`/api/v1/webhooks/${deliveriesFor.id}/deliveries`) : Promise.resolve(null), [deliveriesFor]);
+  const [mail, setMail] = useState<EmailChannel | null>(null);
+  useEffect(() => { if (email.data?.email_channel) setMail(email.data.email_channel); }, [email.data]);
+
+  const createHook = async () => {
+    try {
+      const res = await api<{ webhook: Webhook }>('/api/v1/webhooks', { method: 'POST', body: { url, events: events.split(',').map((e) => e.trim()).filter(Boolean).length ? events.split(',').map((e) => e.trim()).filter(Boolean) : undefined, allow_private: allowPrivate } });
+      setCreating(false); setUrl(''); setEvents('*'); setAllowPrivate(false);
+      setCreated(res.webhook); hooks.refresh();
+    } catch (e: any) { toast(e.message, 'err'); }
+  };
+  const testHook = async (w: Webhook) => {
+    try { await api(`/api/v1/webhooks/${w.id}/test`, { method: 'POST', body: {} }); toast('Test delivery queued — check the deliveries log'); }
+    catch (e: any) { toast(e.message, 'err'); }
+  };
+  const deleteHook = async (w: Webhook) => {
+    try { await api(`/api/v1/webhooks/${w.id}`, { method: 'DELETE' }); toast('Webhook removed'); hooks.refresh(); } catch (e: any) { toast(e.message, 'err'); }
+  };
+  const saveMail = async () => {
+    if (!mail) return;
+    try {
+      await api('/api/v1/settings/email', { method: 'PUT', body: { smtp_host: mail.smtp_host, smtp_port: Number(mail.smtp_port), from: mail.from, to: mail.to, events: mail.events, enabled: mail.enabled } });
+      toast('Email channel saved'); email.refresh();
+    } catch (e: any) { toast(e.message, 'err'); }
+  };
+  const testMail = async () => {
+    try { await api('/api/v1/settings/email/test', { method: 'POST', body: {} }); toast('Test email queued'); } catch (e: any) { toast(e.message, 'err'); }
+  };
+
+  return (
+    <>
+      <PageHead title="Delivery channels" desc="Notifications fan out to registered channels: webhooks are HMAC-SHA256 signed (x-meridian-signature), email uses your SMTP relay."
+        actions={<button onClick={() => setCreating(true)}>Add webhook</button>} />
+      <Panel pad={false}>
+        <DataTable
+          rows={hooks.data?.webhooks}
+          loading={hooks.loading}
+          empty="No webhooks yet — register an endpoint to receive signed event deliveries."
+          cols={[
+            { key: 'url', label: 'Endpoint', render: (w) => <span className="mono">{w.url}</span> },
+            { key: 'events', label: 'Events', render: (w) => <span className="mono">{(w.events || []).join(', ')}</span> },
+            { key: 'enabled', label: 'State', render: (w) => w.enabled ? <Badge tone="ok">enabled</Badge> : <Badge tone="plain">disabled</Badge> },
+            { key: 'last', label: 'Last delivery', render: (w) => <>{w.last_status ? <StateBadge s={w.last_status.toUpperCase()} /> : <span style={{ color: 'var(--text-dim)' }}>never</span>}{w.last_delivery_at ? <span style={{ color: 'var(--text-dim)' }}> · {fmt.dt(w.last_delivery_at)}</span> : null}</> },
+            { key: 'act', label: '', render: (w) => <span style={{ whiteSpace: 'nowrap' }}>
+              <button className="sm" onClick={() => void testHook(w)}>Test</button>{' '}
+              <button className="sm" onClick={() => setDeliveriesFor(w)}>Deliveries</button>{' '}
+              <button className="sm" onClick={() => void deleteHook(w)}>Remove</button>
+            </span> },
+          ]}
+        />
+      </Panel>
+
+      <Panel title="Email channel (SMTP)">
+        {!mail ? (
+          <div style={{ color: 'var(--text-dim)' }}>No email channel configured. Add your SMTP relay details to receive notifications by email. SMS delivery remains a documented limitation (external carrier credentials required).</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+            <Field label="SMTP host"><input value={mail.smtp_host} onChange={(e) => setMail({ ...mail, smtp_host: e.target.value })} placeholder="smtp.example.com" /></Field>
+            <Field label="Port"><input value={mail.smtp_port} onChange={(e) => setMail({ ...mail, smtp_port: Number(e.target.value) })} placeholder="587" /></Field>
+            <Field label="From"><input value={mail.from} onChange={(e) => setMail({ ...mail, from: e.target.value })} placeholder="alerts@example.com" /></Field>
+            <Field label="To (comma-separated)"><input value={mail.to} onChange={(e) => setMail({ ...mail, to: e.target.value })} placeholder="team@example.com" /></Field>
+            <Field label="Events" help="Filters: * for all, or prefixes like job. monitor."><input value={(mail.events || []).join(', ')} onChange={(e) => setMail({ ...mail, events: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) })} /></Field>
+            <Field label="Enabled"><label style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={mail.enabled} onChange={(e) => setMail({ ...mail, enabled: e.target.checked })} /> deliver notifications</label></Field>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'end' }}>
+              <button onClick={() => void saveMail()}>Save</button>
+              <button onClick={() => void testMail()} disabled={!mail.enabled}>Send test</button>
+            </div>
+          </div>
+        )}
+      </Panel>
+
+      {creating && (
+        <Modal title="Register webhook endpoint" onClose={() => setCreating(false)} footer={<>
+          <button className="primary" onClick={() => void createHook()}>Create</button>
+          <button onClick={() => setCreating(false)}>Cancel</button>
+        </>}>
+          <Field label="Endpoint URL" help="Meridian POSTs a signed JSON payload on each matching notification.">
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/meridian-hook" />
+          </Field>
+          <Field label="Events" help="Comma-separated filters: * for all, or prefixes like job. monitor. finding.">
+            <input value={events} onChange={(e) => setEvents(e.target.value)} placeholder="job., monitor." />
+          </Field>
+          <Field label="Private targets">
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input type="checkbox" checked={allowPrivate} onChange={(e) => setAllowPrivate(e.target.checked)} />
+              allow loopback/private addresses (explicit opt-in — treat private targets like any authorized target)
+            </label>
+          </Field>
+        </Modal>
+      )}
+
+      {created && (
+        <Modal title="Webhook registered" onClose={() => setCreated(null)} footer={<button className="primary" onClick={() => setCreated(null)}>I stored the secret</button>}>
+          <p>Endpoint <span className="mono">{created.url}</span> is registered. Verify deliveries with this HMAC-SHA256 signing secret — it is shown <b>only once</b>:</p>
+          <pre className="mono" style={{ padding: 10, borderRadius: 6, background: 'var(--bg-alt, #f4f4f5)', wordBreak: 'break-all' }}>{created.secret}</pre>
+          <p style={{ color: 'var(--text-dim)', fontSize: 12 }}>Signature header: x-meridian-signature: sha256=HMAC(secret, `${'{timestamp}'}.${'{body}'}`).</p>
+        </Modal>
+      )}
+
+      {deliveriesFor && (
+        <Modal title={`Deliveries — ${deliveriesFor.url}`} onClose={() => setDeliveriesFor(null)} wide>
+          <DataTable
+            rows={deliveries.data?.deliveries}
+            loading={deliveries.loading}
+            empty="No delivery attempts yet."
+            cols={[
+              { key: 'created', label: 'Queued', render: (d) => fmt.dt(d.created_at) },
+              { key: 'event', label: 'Event', render: (d) => <span className="mono">{d.event || '—'}</span> },
+              { key: 'status', label: 'Status', render: (d) => <StateBadge s={(d.status || 'PENDING').toUpperCase()} /> },
+              { key: 'attempts', label: 'Attempts', className: 'num', render: (d) => `${d.attempts}/${d.max_attempts}` },
+              { key: 'http', label: 'HTTP', render: (d) => d.response_status ?? '—' },
+              { key: 'next', label: 'Next attempt', render: (d) => d.next_attempt_at && d.status === 'pending' ? fmt.dt(d.next_attempt_at) : '—' },
+              { key: 'err', label: 'Error', render: (d) => d.last_error ? <span style={{ color: 'var(--danger, #b00)' }}>{d.last_error}</span> : '—' },
+            ]}
+          />
+        </Modal>
+      )}
     </>
   );
 }

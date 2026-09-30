@@ -9,12 +9,12 @@ import { balanceOf, grantCredits } from '#app/billing';
 import { createServiceRequest } from '#worker/runner';
 import { generateReport } from '#report/engine';
 import { nowIso, sha256 } from '#core/util';
-import { rateLimiter } from './ratelimit.js';
+import { createRateLimiter } from './ratelimit.js';
 
 /** Registers core routes: auth, users, api keys, assets, catalog, requests, jobs, findings, evidence, reports. */
 export function registerCoreRoutes(router, app) {
   const { db, files } = app;
-  const limiter = rateLimiter();
+  const limiter = app.limiter || createRateLimiter();
 
   // ---------------- AUTH ----------------
   router.post('/api/v1/auth/register', async (ctx) => {

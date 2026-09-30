@@ -5,6 +5,7 @@ import { validate, V } from '#core/validate';
 import { recordAudit, verifyAuditChain } from '#app/audit';
 import { balanceOf, buildInvoice } from '#app/billing';
 import { notify, listNotifications, markRead } from '#app/notify';
+import { validateWebhookUrl } from '#app/webhooks';
 import { runMonitor } from '#worker/monitors';
 import { parseCron, nextRun } from '#auto/cron';
 import { saveWorkflow, runWorkflow } from '#auto/workflow';
@@ -398,8 +399,8 @@ export function registerExtraRoutes(router, app) {
     ctx.respond(200, { ok: true });
   });
 
-  // ---------------- WEBHOOKS ----------------
-  router.post('/api/v1/webhooks', async (ctx) => {
+  // ---------------- AUTOMATION WEBHOOKS (inbound triggers; ingest at POST /api/v1/hooks/:token) ----------------
+  router.post('/api/v1/automation/webhooks', async (ctx) => {
     requireAuth(ctx, ['automation:write']);
     const body = validate({ event: V.enum(['monitor_event', 'job_completed', 'finding_created']), url: V.url({ schemes: ['http:', 'https:'] }) }, ctx.body);
     const token = `mwh_${crypto.randomBytes(20).toString('base64url')}`;
@@ -407,12 +408,12 @@ export function registerExtraRoutes(router, app) {
     const rec = db.insert('webhook_endpoints', { tenant_id: ctx.tid, event: body.event, url: body.url, token_hash: sha256(token), secret, enabled: true, created_at: nowIso() });
     ctx.respond(201, { id: rec.id, token, secret, note: 'POST to /api/v1/hooks/{token} to trigger automation; outbound calls sign payloads with HMAC-SHA256 using the secret' });
   });
-  router.get('/api/v1/webhooks', async (ctx) => {
+  router.get('/api/v1/automation/webhooks', async (ctx) => {
     requireAuth(ctx, ['automation:read']);
     const rows = db.store.find('webhook_endpoints', (w) => w.tenant_id === ctx.tid);
     ctx.respond(200, { webhooks: rows.map((w) => ({ ...w, token_hash: undefined, secret: undefined })) });
   });
-  router.delete('/api/v1/webhooks/:id', async (ctx) => {
+  router.delete('/api/v1/automation/webhooks/:id', async (ctx) => {
     requireAuth(ctx, ['automation:write']);
     db.remove('webhook_endpoints', ctx.tid, ctx.params.id);
     ctx.respond(200, { ok: true });
@@ -460,6 +461,92 @@ export function registerExtraRoutes(router, app) {
     for (const n of listNotifications(db, ctx.tid, ctx.auth.user.id, { unreadOnly: true })) markRead(db, ctx.tid, ctx.auth.user.id, n.id);
     ctx.respond(200, { ok: true });
   });
+
+  // ---------------- WEBHOOKS (external notification delivery) ----------------
+  const requireWebhookPerm = (ctx) => { requireAuth(ctx, ['settings:write']); };
+  router.get('/api/v1/webhooks', async (ctx) => {
+    requireAuth(ctx, []);
+    const rows = db.store.find('webhooks', (w) => w.tenant_id === ctx.tid).map(({ secret, ...w }) => w); // secret never returned
+    ctx.respond(200, { webhooks: rows, total: rows.length });
+  });
+  router.post('/api/v1/webhooks', async (ctx) => {
+    requireWebhookPerm(ctx);
+    const body = validate({
+      url: V.string({ min: 8, max: 500 }),
+      events: V.array(V.string({ min: 1, max: 40 }), { max: 20 }).optional(),
+      allow_private: V.boolean().optional(),
+      enabled: V.boolean().optional(),
+    }, ctx.body);
+    const secret = crypto.randomBytes(24).toString('base64url');
+    let url;
+    try { url = validateWebhookUrl(body.url, { allowPrivate: !!body.allow_private }); }
+    catch (e) { throw badRequest(String(e.message || e)); }
+    const w = db.insert('webhooks', {
+      tenant_id: ctx.tid, url, secret, events: body.events?.length ? body.events : ['*'],
+      allow_private: !!body.allow_private, enabled: body.enabled !== false,
+      last_status: null, last_delivery_at: null, created_at: nowIso(),
+    });
+    recordAudit(db.store, { tenantId: ctx.tid, actorType: 'user', actorId: ctx.auth.user.id, action: 'webhook.created', resource: 'webhook', resourceId: w.id, detail: { url, events: w.events } });
+    ctx.respond(201, { webhook: { ...w, secret } }); // secret shown once at creation
+  });
+  router.delete('/api/v1/webhooks/:id', async (ctx) => {
+    requireWebhookPerm(ctx);
+    const w = db.store.findOne('webhooks', (x) => x.tenant_id === ctx.tid && x.id === ctx.params.id);
+    if (!w) throw notFound('webhook not found');
+    db.store.del('webhooks', w.id);
+    recordAudit(db.store, { tenantId: ctx.tid, actorType: 'user', actorId: ctx.auth.user.id, action: 'webhook.deleted', resource: 'webhook', resourceId: w.id, detail: { url: w.url } });
+    ctx.respond(200, { ok: true });
+  });
+  router.post('/api/v1/webhooks/:id/test', async (ctx) => {
+    requireWebhookPerm(ctx);
+    const w = db.store.findOne('webhooks', (x) => x.tenant_id === ctx.tid && x.id === ctx.params.id);
+    if (!w) throw notFound('webhook not found');
+    const n = notify(db, { tenantId: ctx.tid, userId: ctx.auth.user.id, type: 'webhook.test', title: 'Webhook test delivery', body: `Test delivery for ${w.url} — if you can read this at the target, the channel works.`, data: { webhook_id: w.id } });
+    ctx.respond(202, { ok: true, notification_id: n.id, message: 'test notification queued for delivery' });
+  });
+  router.get('/api/v1/webhooks/:id/deliveries', async (ctx) => {
+    requireAuth(ctx, []);
+    const w = db.store.findOne('webhooks', (x) => x.tenant_id === ctx.tid && x.id === ctx.params.id);
+    if (!w) throw notFound('webhook not found');
+    const rows = db.store.find('notify_deliveries', (d) => d.tenant_id === ctx.tid && d.webhook_id === w.id)
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 100)
+      .map((d) => ({ ...d, payload: undefined })); // payload not re-served (it is visible at the receiver)
+    ctx.respond(200, { deliveries: rows, total: rows.length });
+  });
+
+  // ---------------- EMAIL CHANNEL (SMTP settings) ----------------
+  router.get('/api/v1/settings/email', async (ctx) => {
+    requireAuth(ctx, []);
+    const e = db.store.findOne('email_channels', (x) => x.tenant_id === ctx.tid);
+    ctx.respond(200, { email_channel: e ? { ...e, secret: undefined } : null });
+  });
+  router.put('/api/v1/settings/email', async (ctx) => {
+    requireWebhookPerm(ctx);
+    const body = validate({
+      smtp_host: V.string({ min: 1, max: 200 }), smtp_port: V.int({ min: 1, max: 65535 }),
+      from: V.string({ min: 3, max: 200 }), to: V.string({ min: 3, max: 1000 }),
+      events: V.array(V.string({ min: 1, max: 40 }), { max: 20 }).optional(),
+      enabled: V.boolean().optional(),
+    }, ctx.body);
+    const existing = db.store.findOne('email_channels', (x) => x.tenant_id === ctx.tid);
+    const record = {
+      id: existing?.id || `emch_${crypto.randomBytes(8).toString('hex')}`, tenant_id: ctx.tid,
+      smtp_host: body.smtp_host, smtp_port: body.smtp_port, from: body.from, to: body.to,
+      events: body.events?.length ? body.events : ['*'], enabled: body.enabled !== false,
+      created_at: existing?.created_at || nowIso(), updated_at: nowIso(),
+    };
+    db.store.put('email_channels', record);
+    recordAudit(db.store, { tenantId: ctx.tid, actorType: 'user', actorId: ctx.auth.user.id, action: 'settings.email.updated', resource: 'email_channel', resourceId: record.id, detail: { smtp_host: body.smtp_host, smtp_port: body.smtp_port } });
+    ctx.respond(200, { ok: true, email_channel: { ...record, secret: undefined } });
+  });
+  router.post('/api/v1/settings/email/test', async (ctx) => {
+    requireWebhookPerm(ctx);
+    const e = db.store.findOne('email_channels', (x) => x.tenant_id === ctx.tid && x.enabled !== false);
+    if (!e) throw badRequest('no enabled email channel configured');
+    const n = notify(db, { tenantId: ctx.tid, userId: ctx.auth.user.id, type: 'email.test', title: 'Email channel test', body: `Test delivery via ${e.smtp_host}:${e.smtp_port} — if this message arrives, the channel works.`, data: { email_channel_id: e.id } });
+    ctx.respond(202, { ok: true, notification_id: n.id, message: 'test notification queued for email delivery' });
+  });
+
   router.get('/api/v1/tasks', async (ctx) => {
     requireAuth(ctx, []);
     const { rows, total } = db.list('tasks', ctx.tid, { limit: 100 });

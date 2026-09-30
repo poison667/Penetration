@@ -3,6 +3,7 @@ import { executeJob, prepareJob } from './runner.js';
 import { runMonitor } from './monitors.js';
 import { parseCron, nextRun } from '#auto/cron';
 import { applyMonthlyGrant } from '#app/billing';
+import { flushDeliveries } from '#app/webhooks';
 import { nowIso } from '#core/util';
 
 /**
@@ -65,6 +66,8 @@ export class Scheduler {
       }
       // 5. monthly grants
       this.#monthlyBilling();
+      // 6. flush due external notification deliveries (webhook/email outbox)
+      try { await flushDeliveries(this.db); } catch (e) { console.error('[notify-delivery]', e.message); }
     } finally {
       this.running = false;
     }

@@ -198,3 +198,73 @@ test('API server: MFA challenge + TOTP verification on login', async () => {
     rmSync(h.dir, { recursive: true, force: true });
   }
 });
+
+test('API server: webhook + email channel registry (RBAC, SSRF guard, secret hygiene)', async () => {
+  const h = await startApi();
+  try {
+    const port = h.server.address().port;
+    const login = await api(port, '/api/v1/auth/login', { method: 'POST', body: { email: 'owner@x.co', password: 'Owner!Pass1A' } });
+    const ownerTok = login.json.access_token || login.json.accessToken;
+    const vlogin = await api(port, '/api/v1/auth/login', { method: 'POST', body: { email: 'viewer@x.co', password: 'Viewer!Pass1A' } });
+    const viewerTok = vlogin.json.access_token || vlogin.json.accessToken;
+
+    // anonymous → 401 on both verbs
+    assert.equal((await api(port, '/api/v1/webhooks')).status, 401, 'anon GET /webhooks must 401');
+    assert.equal((await api(port, '/api/v1/webhooks', { method: 'POST', body: { url: 'https://example.com/hook' } })).status, 401, 'anon POST /webhooks must 401');
+
+    // SSRF guard: private target without allow_private → 400
+    const priv = await api(port, '/api/v1/webhooks', { method: 'POST', token: ownerTok, body: { url: 'http://127.0.0.1:9/hook' } });
+    assert.equal(priv.status, 400, `private URL must be rejected: ${JSON.stringify(priv.json)}`);
+
+    // create → 201, secret returned exactly once
+    const created = await api(port, '/api/v1/webhooks', { method: 'POST', token: ownerTok, body: { url: 'https://example.com/hook', events: ['job.'] } });
+    assert.equal(created.status, 201, JSON.stringify(created.json));
+    const wh = created.json.webhook;
+    assert.ok(wh.id && wh.secret, 'creation response carries id + one-time secret');
+    assert.deepEqual(wh.events, ['job.']);
+
+    // listing strips the secret everywhere
+    const listed = await api(port, '/api/v1/webhooks', { token: ownerTok });
+    assert.equal(listed.status, 200);
+    assert.ok(!JSON.stringify(listed.json).includes(wh.secret), 'secret must never appear in listings');
+    const got = listed.json.webhooks.find((w) => w.id === wh.id);
+    assert.ok(got && got.secret === undefined, 'stored webhook row has secret removed');
+
+    // RBAC: viewer lacks settings:write → 403 on create; read allowed
+    assert.equal((await api(port, '/api/v1/webhooks', { method: 'POST', token: viewerTok, body: { url: 'https://example.com/hook' } })).status, 403, 'viewer must not create webhooks');
+    assert.equal((await api(port, '/api/v1/webhooks', { token: viewerTok })).status, 200, 'viewer may list webhooks');
+
+    // deliveries endpoint responds (empty) and strips payloads
+    const deliv = await api(port, `/api/v1/webhooks/${wh.id}/deliveries`, { token: ownerTok });
+    assert.equal(deliv.status, 200);
+    assert.ok(Array.isArray(deliv.json.deliveries));
+
+    // email channel settings: anon 401, viewer 403 on write, owner 200 round-trip
+    assert.equal((await api(port, '/api/v1/settings/email', { method: 'PUT', token: viewerTok, body: { smtp_host: '127.0.0.1', smtp_port: 2525, from: 'a@x.co', to: 'b@x.co' } })).status, 403, 'viewer must not write email settings');
+    const emailPut = await api(port, '/api/v1/settings/email', { method: 'PUT', token: ownerTok, body: { smtp_host: '127.0.0.1', smtp_port: 2525, from: 'alerts@x.co', to: 'owner@x.co', events: ['monitor.'] } });
+    assert.equal(emailPut.status, 200, JSON.stringify(emailPut.json));
+    const emailGet = await api(port, '/api/v1/settings/email', { token: ownerTok });
+    assert.equal(emailGet.status, 200);
+    assert.equal(emailGet.json.email_channel.smtp_host, '127.0.0.1');
+    assert.deepEqual(emailGet.json.email_channel.events, ['monitor.']);
+
+    // re-pathed automation webhook registry still works (inbound triggers)
+    const auto = await api(port, '/api/v1/automation/webhooks', { method: 'POST', token: ownerTok, body: { event: 'job_completed', url: 'https://example.com/cb' } });
+    assert.equal(auto.status, 201, JSON.stringify(auto.json));
+    assert.match(auto.json.token, /^mwh_/);
+
+    // delete → gone
+    assert.equal((await api(port, `/api/v1/webhooks/${wh.id}`, { method: 'DELETE', token: ownerTok })).status, 200);
+    assert.equal((await api(port, '/api/v1/webhooks', { token: ownerTok })).json.webhooks.length, 0, 'webhook removed');
+
+    // audit trail captured create + delete
+    const audit = await api(port, '/api/v1/audit?limit=50', { token: ownerTok });
+    const rows = audit.json.entries || audit.json.logs || [];
+    const actions = rows.map((a) => a.action);
+    assert.ok(actions.includes('webhook.created') && actions.includes('webhook.deleted'), `audit must record webhook lifecycle: ${actions.join(',')}`);
+  } finally {
+    h.server.close();
+    h.store.close();
+    rmSync(h.dir, { recursive: true, force: true });
+  }
+});

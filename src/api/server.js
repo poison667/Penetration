@@ -13,15 +13,15 @@ import { createServiceRequest } from '#worker/runner';
 import { generateReport } from '#report/engine';
 import { AutomationEngine } from '#auto/engine';
 import { Scheduler } from '#worker/scheduler';
-import { rateLimiter } from './ratelimit.js';
+import { createRateLimiter } from './ratelimit.js';
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.map': 'application/json', '.txt': 'text/plain; charset=utf-8' };
 
 export function createServer({ db, files, config }) {
   const router = new Router();
-  const limiter = rateLimiter();
+  const limiter = createRateLimiter();
 
-  const app = { db, files, config, router, requestService: null, generateReport: (opts) => generateReport(db, files, opts), automation: null, scheduler: null };
+  const app = { db, files, config, router, limiter, requestService: null, generateReport: (opts) => generateReport(db, files, opts), automation: null, scheduler: null };
   app.requestService = (opts) => {
     const { job } = createServiceRequest({ db, ...opts });
     return job;

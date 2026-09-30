@@ -1,12 +1,14 @@
 import { bus, TOPICS } from '#core/events';
+import { enqueueExternalDeliveries } from '#app/webhooks';
 
-/** Persisted in-app notifications + real-time push via SSE. */
+/** Persisted in-app notifications + real-time push via SSE + external channel fan-out (webhooks/email). */
 export function notify(db, { tenantId, userId = null, type, title, body, data = null }) {
   const n = db.insert('notifications', {
     tenant_id: tenantId, user_id: userId, type, title, body, data,
     read_at: null, created_at: new Date().toISOString(),
   });
   bus.publish(TOPICS.notification, n);
+  enqueueExternalDeliveries(db, n); // outbox for registered webhook/email channels (never throws)
   return n;
 }
 export function notifyTenant(db, tenantId, payload) {

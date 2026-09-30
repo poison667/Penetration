@@ -30,6 +30,7 @@ the options, the choice, and the residual loss (cross-referenced in LIMITATIONS.
 | **D21** | Cron `nextRun` is strictly after the current minute (minute boundary), and dom/dow use standard OR semantics only when both are restricted. | Correctness of scheduling semantics (three real bugs found by tests). |
 | **D22** | XLSX reader resolves rels targets relative to `xl/`. | OOXML spec: relationship targets are relative to the part's directory. |
 | **D23** | Report integrity = content hash computed pre-stamp, then embedded in the rendered artifact. | A document cannot contain its own final hash; the pre-stamp hash is embedded and documented in the methodology section. |
+| **D24** | Two distinct webhook features resolved by namespacing: automation-trigger registry lives at `/api/v1/automation/webhooks` (ingest unchanged at `/api/v1/hooks/:token`), notification-delivery registry owns `/api/v1/webhooks`. | Both features legitimately wanted the same path; with first-match routing the second registration is dead code. Re-pathing the automation registry next to its sibling `/api/v1/automation/*` routes preserves both features with zero loss; no consumers of the old path existed yet. |
 
 ## Conflict register
 
@@ -41,3 +42,4 @@ the options, the choice, and the residual loss (cross-referenced in LIMITATIONS.
 | C4 | "Desktop feature parity" vs "one codebase". | Tauri shell loads the same SPA; platform differences isolated to shell config. | None beyond C3's build constraint. |
 | C5 | "AI grounded analysis" vs "no external AI dependency required to run". | LocalGroundedProvider keeps the pipeline real (retrieval + citation + grounded flag) without external calls; external providers pluggable. | Analysis quality bounded by local provider; never fabricated. |
 | C6 | "Rich PDF reports" vs "zero runtime dependencies". | Custom PDF 1.4 writer (fonts, tables, pagination) instead of a PDF library. | Limited typography (Type1 base fonts, no image embedding) — documented L-6. |
+| C7 | "SMS notifications" vs "no fake completeness / no fabricated deliveries". | Webhook + email channels are fully real (signed POSTs, SMTP client, retry/backoff, delivery logs); SMS stays a documented limitation because carrier credentials cannot exist in a development environment. | SMS not delivered in this build — stated openly (L-5) instead of stubbed. |

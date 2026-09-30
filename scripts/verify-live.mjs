@@ -73,6 +73,41 @@ async function main() {
   const sse = await fetch(`${B}/events?access_token=${login.access_token}`);
   check('SSE stream opens', sse.status === 200 && (sse.headers.get('content-type') || '').includes('text/event-stream'));
 
+  // external notification delivery: real webhook fan-out with HMAC signature (end-to-end)
+  {
+    const http = await import('node:http');
+    const crypto = await import('node:crypto');
+    const received = [];
+    const receiver = http.createServer((req, res) => {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => { received.push({ headers: req.headers, body }); res.writeHead(200); res.end('ok'); });
+    });
+    await new Promise((r) => receiver.listen(0, '127.0.0.1', r));
+    const rport = receiver.address().port;
+    try {
+      const created = await (await fetch(`${B}/api/v1/webhooks`, { method: 'POST', headers: { ...H, 'content-type': 'application/json' }, body: JSON.stringify({ url: `http://127.0.0.1:${rport}/live-hook`, allow_private: true, events: ['*'] }) })).json();
+      const wh = created.webhook;
+      const testRes = await fetch(`${B}/api/v1/webhooks/${wh.id}/test`, { method: 'POST', headers: H });
+      let hits = [];
+      for (let i = 0; i < 40 && hits.length === 0; i++) { await new Promise((r) => setTimeout(r, 500)); hits = received.filter((x) => x.headers['x-meridian-event'] === 'webhook.test'); }
+      let sigOk = false;
+      if (hits.length) {
+        const h = hits[0].headers;
+        const sig = String(h['x-meridian-signature'] || '');
+        const ts = String(h['x-meridian-timestamp'] || '');
+        const expect = 'sha256=' + crypto.createHmac('sha256', wh.secret).update(`${ts}.${hits[0].body}`).digest('hex');
+        sigOk = sig === expect;
+      }
+      const deliv = await (await fetch(`${B}/api/v1/webhooks/${wh.id}/deliveries`, { headers: H })).json();
+      const delivered = (deliv.deliveries || []).some((d) => d.status === 'delivered');
+      check('webhook delivery + HMAC signature (live fan-out)', hits.length > 0 && sigOk && delivered, hits.length ? `signed POST received by ephemeral receiver, ${deliv.deliveries?.length ?? 0} delivery row(s)` : 'no delivery within 20s');
+      await fetch(`${B}/api/v1/webhooks/${wh.id}`, { method: 'DELETE', headers: H });
+    } finally {
+      receiver.close();
+    }
+  }
+
   // fixture (the authorized test target) reachable when running
   try {
     const fx = await fetch(`${FIXTURE}/`, { signal: AbortSignal.timeout(2000) });

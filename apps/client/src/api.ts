@@ -21,6 +21,9 @@ export interface Kb { id: string; name: string; created_at: string; document_ids
 export interface Workflow { id: string; name: string; version: number; definition: Record<string, unknown>; updated_at?: string; created_at?: string }
 export interface WorkflowRun { id: string; workflow_id: string; state: string; started_at?: string; finished_at?: string; step_states?: { step_id: string; state: string }[]; error?: string | null }
 export interface Schedule { id: string; cron: string; next_run_at?: string; last_run_at?: string | null; enabled: boolean; workflow_id?: string | null; rule_id?: string | null }
+export interface Webhook { id: string; url: string; events: string[]; enabled: boolean; allow_private?: boolean; last_status?: string | null; last_delivery_at?: string | null; created_at: string; secret?: string }
+export interface WebhookDelivery { id: string; kind: string; event?: string; status: string; attempts: number; max_attempts: number; response_status?: number | null; last_error?: string | null; next_attempt_at?: string | null; created_at: string; delivered_at?: string | null }
+export interface EmailChannel { id: string; smtp_host: string; smtp_port: number; from: string; to: string; events: string[]; enabled: boolean; created_at?: string; updated_at?: string }
 export interface ApiKey { id: string; name: string; prefix: string; scopes: string[]; created_at: string; last_used_at?: string | null }
 export interface Invoice { id: string; created_at: string; total: number; status?: string; lines?: { description: string; amount: number }[] }
 export interface AuditEntry { seq: number; ts: string; action: string; actor_type: string; actor_id?: string; resource: string; resource_id?: string; detail?: Record<string, unknown>; prev_hash: string; hash: string }

@@ -10,6 +10,7 @@
  *    demo workspace are produced by real engine runs, not fixtures.
  */
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { openStore } from '#store/store';
 import { Db } from '#app/db';
@@ -93,6 +94,19 @@ db.insert('rules', {
 db.insert('schedules', {
   tenant_id: tenant.id, name: 'Weekly fixture audit', cron: '0 6 * * 1', rule_id: null, workflow_id: null,
   enabled: false, next_run_at: null, last_run_at: null, created_at: new Date().toISOString(),
+});
+
+// 5b. external notification channels (demo rows, disabled — no fake deliveries)
+db.insert('webhooks', {
+  tenant_id: tenant.id, url: 'https://example.com/hook', secret: crypto.randomBytes(24).toString('base64url'),
+  events: ['job.', 'monitor.'], allow_private: false, enabled: false,
+  last_status: null, last_delivery_at: null, created_at: new Date().toISOString(),
+  note: 'DEMO DATA — disabled example. Enable and point at your receiver; payloads are HMAC-SHA256 signed.',
+});
+db.insert('email_channels', {
+  tenant_id: tenant.id, smtp_host: '127.0.0.1', smtp_port: 2525, from: 'alerts@meridian.local', to: 'demo@meridian.local',
+  events: ['*'], enabled: false, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  note: 'DEMO DATA — disabled example. Enable with your SMTP relay details.',
 });
 
 recordAudit(store, { tenantId: tenant.id, actorType: 'system', actorId: null, action: 'demo.seeded', resource: 'tenant', resourceId: tenant.id, detail: { note: 'DEMO DATA seed' } });
