@@ -204,13 +204,64 @@ function summarizeCert(cert) {
     valid_from: cert.valid_from || null,
     valid_to: cert.valid_to || null,
     valid_to_ts: cert.valid_to ? Date.parse(cert.valid_to) : null,
-    sigAlgorithm: cert.sig_alg || null,
+    sigAlgorithm: cert.sigAlgorithm || certSigAlgorithmFromDer(cert.raw) || null,
     fingerprint256: cert.fingerprint256 || null,
     serialNumber: cert.serialNumber || null,
     bits: cert.bits || null,
     issuerCN: cert.issuer?.CN || null,
     subjectCN: cert.subject?.CN || null,
   };
+}
+
+/**
+ * Extract the certificate signature-algorithm name from the DER bytes.
+ * Node's getPeerCertificate() does not expose the signature algorithm on all
+ * supported versions, so parse the outer Certificate SEQUENCE:
+ *   Certificate ::= SEQUENCE { tbsCertificate SEQUENCE, signatureAlgorithm SEQUENCE, signatureValue BIT STRING }
+ */
+function certSigAlgorithmFromDer(raw) {
+  try {
+    if (!raw || !raw.length) return null;
+    const readTLV = (o) => {
+      const tag = raw[o];
+      let len = raw[o + 1]; let hdr = 2;
+      if (len & 0x80) {
+        const n = len & 0x7f; len = 0;
+        for (let i = 0; i < n; i++) len = (len << 8) | raw[o + 2 + i];
+        hdr = 2 + n;
+      }
+      return { tag, len, hdr, start: o + hdr };
+    };
+    const outer = readTLV(0);
+    if (outer.tag !== 0x30) return null;
+    const tbs = readTLV(outer.start);
+    if (tbs.tag !== 0x30) return null;
+    const sigAlg = readTLV(tbs.start + tbs.len);
+    if (sigAlg.tag !== 0x30) return null;
+    const oid = readTLV(sigAlg.start);
+    if (oid.tag !== 0x06) return null;
+    const bytes = raw.subarray(oid.start, oid.start + oid.len);
+    let dotted = `${Math.floor(bytes[0] / 40)}.${bytes[0] % 40}`;
+    let val = 0;
+    for (let i = 1; i < bytes.length; i++) {
+      val = (val << 7) | (bytes[i] & 0x7f);
+      if (!(bytes[i] & 0x80)) { dotted += `.${val}`; val = 0; }
+    }
+    const OIDS = {
+      '1.2.840.113549.1.1.4': 'md5WithRSAEncryption',
+      '1.2.840.113549.1.1.5': 'sha1WithRSAEncryption',
+      '1.2.840.113549.1.1.11': 'sha256WithRSAEncryption',
+      '1.2.840.113549.1.1.12': 'sha384WithRSAEncryption',
+      '1.2.840.113549.1.1.13': 'sha512WithRSAEncryption',
+      '1.2.840.10045.4.1': 'ecdsa-with-SHA1',
+      '1.2.840.10045.4.3.2': 'ecdsa-with-SHA256',
+      '1.2.840.10045.4.3.3': 'ecdsa-with-SHA384',
+      '1.2.840.10045.4.3.4': 'ecdsa-with-SHA512',
+      '1.2.840.10040.4.1': 'dsaWithSHA1',
+      '1.2.840.10040.4.3': 'dsaWithSHA256',
+    };
+    return OIDS[dotted] || `OID ${dotted}`;
+  } catch { return null; }
 }
 
 /** Evidence capture helper — turns a fetch result into an evidence record body. */

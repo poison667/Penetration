@@ -6,14 +6,13 @@ was performed on the workspace at `/home/user/meridian` (Node v20.20.2, Linux).
 ## 1. Automated suite
 
 - `npm test` → **185/185 passing, 27 files, ~37s** (live-generated breakdown: `docs/TEST_REPORT.md`).
-- Verification as a whole (suite + live probes + real browser + oracle audit) found
-  and fixed **15 real defects** in production source: 9 by the suite (tokenizer loop,
+- Verification as a whole (suite + live probes + real browser + oracle audits) found
+  and fixed **23 real defects** in production source: 9 by the suite (tokenizer loop,
   ledger ordering, xlsx rels path, 3 cron defects, RAG chunk loss, session-family
   revocation, binary secret sealing, api-keys `require()` 500, dedupe null-key
   crash), 2 by real-browser verification (BillingView React-tree crash, missing
-  evidence-list route), and 4 by the security-oracle audit (open-redirect probe
-  redirect-following blindness, header-reflection hops, HPP query loss,
-  invalid-session page filter). Details: TEST_REPORT.md + §3b3/§3b4 below.
+  evidence-list route), 4 by the validation-oracle audit (§3b4), and 8 by the
+  full-catalog oracle audit (§3b5). Details: TEST_REPORT.md + §3b3–§3b5 below.
 
 ## 2. End-to-end pipeline (no mocks)
 
@@ -81,6 +80,54 @@ The 8 VAL checks that still do not fire are documented honestly in
 IMAP/NoSQL) needing real external services, VAL-018 is a true negative (Node's
 strict HTTP parser), VAL-004 is superseded by VAL-001 by design, and VAL-016
 needs a C-style format sink. None were forced.
+
+## 3b5. Full-catalog oracle audit: 164/176 checks proven as true positives
+
+The same audit was then extended to **every** check family (all 176 checks across
+19 engines), not just validation. The live demo environment was extended with two
+additional authorized assets — the fixture's HTTPS endpoint
+(`https://localhost:8082`, deliberately weak self-signed SHA-1 certificate with
+10-day validity) and its marketing redirect chain (`/promo → /promo2 → /deals`,
+a slow, 500KB, uncompressed, 34-image page) — so TLS, HTTPS-only and
+performance checks have genuine targets. The fixture gained 30+ additional real
+flaws (see `fixtures/vuln-app/README.md`), and every engine was re-run live
+through the API. Result: **164 of 176 checks fire as true positives** across the
+demo dataset; whole families (PRF 9/9, A11Y 12/12, CRP 7/7, H5 6/6, BIZ 5/5,
+PAY 5/5, UPL 10/10, AUT 6/6, CFG 16/17, ATH 15/16, SES 13/14, TLS 8/9) are now
+proven against real HTTP exchanges with captured evidence.
+
+This round exposed **eight more real engine defects** (all fixed, all re-verified live):
+- **TLS engine skipped http assets entirely** (`if (start.protocol === 'http:') return`)
+  even when the authorization record declared an in-scope HTTPS port — TLS-001…006/008
+  were unreachable for every http:// asset. Fixed: the engine now probes the declared
+  ports (only those — no port scanning) and runs the full analysis on the TLS endpoint.
+- **TLS-004 was dead via a wrong field name**: the cert summary read `cert.sig_alg`,
+  which does not exist in any Node version (Node 20 doesn't expose the signature
+  algorithm at all). Fixed with a real minimal DER parser that extracts the
+  signature-algorithm OID from the certificate bytes.
+- **CFG-015 (banner disclosure) was never implemented by any engine** — a catalog
+  check with no code behind it. Implemented in the headers engine.
+- **ATH-002/008 (reset-flow enumeration/token-in-URL) could not fire as written**:
+  the "plausible address" was a fixed generic address no real application treats
+  specially. Fixed: the probe now harvests addresses actually discovered on the
+  site (mailto links, page text).
+- **AUT-001 (path traversal) was starved by its candidate ranking**: the field-name
+  regex matched `username` (ends with "name") and `xml_document` (contains "doc"),
+  so the first-5 probe budget was consumed before the actual `/file` parameter was
+  reached. Fixed: candidates are now ranked (exact keyword names first).
+- **ATH-014 and DOS-004 were unreachable**: both are gated on the `intrusive`
+  profile, but the catalog did not offer that profile for their services. Fixed.
+- **PRF-006 (caching) skipped when the first referenced asset was unreachable**
+  (e.g. a dead CDN link first in the DOM) — now iterates candidates.
+- **H5-004's wide-scope heuristic missed the standard service-worker passthrough
+  idiom** `fetch(event.request)` — now recognized.
+
+The remaining 12 non-firing checks are honest and documented in the fixture
+README: 5 backend-signature VAL checks (LDAP/ORM/XPath/IMAP/NoSQL), VAL-004
+(superseded), VAL-016 (C-style sink), VAL-018 + TLS-002 + DOS-003 (true
+negatives on a Node target), SES-011 (deliberate trade-off — would conflict
+with the SES-010 sequential-token oracle; the equivalent flaw is proven by
+SES-012), and REC-009 (needs a domain-like asset, not `localhost`).
 
 ## 3b2. Live client↔server contract probe
 

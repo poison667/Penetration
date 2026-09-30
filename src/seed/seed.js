@@ -39,7 +39,7 @@ if (existing && !process.env.FORCE_SEED) {
 console.log('[seed] === DEVELOPMENT / DEMO DATA (clearly identified test data) ===');
 
 // 1. start the loopback fixture target (must be running for seeded jobs)
-const servers = await startFixture({ httpPort: Number(process.env.FIXTURE_HTTP_PORT || 8081), tlsPort: null });
+const servers = await startFixture({ httpPort: Number(process.env.FIXTURE_HTTP_PORT || 8081), tlsPort: Number(process.env.FIXTURE_TLS_PORT || 8082) });
 console.log('[seed] fixture target started on 127.0.0.1:8081 (DELIBERATELY VULNERABLE, loopback only)');
 
 // 2. tenant + users
@@ -56,6 +56,26 @@ const asset = db.insert('assets', {
     status: 'verified', scope_domains: ['localhost', '127.0.0.1'], authorized_by: 'Demo Owner (self-hosted test target)',
     authorization_evidence: 'DEMO DATA: loopback fixture owned by this workspace; see fixtures/vuln-app/server.js',
     exclusions: [], ports: [8081, 8082], allow_private: true, authorized_at: new Date().toISOString(),
+  },
+  status: 'active', created_at: new Date().toISOString(),
+});
+// the fixture's HTTPS endpoint (weak self-signed cert) — same authorization scope
+const tlsAsset = db.insert('assets', {
+  tenant_id: tenant.id, identifier: 'https://localhost:8082', kind: 'web_host', title: 'Fixture Store HTTPS (TLS demo target)', port: 8082,
+  authorization: {
+    status: 'verified', scope_domains: ['localhost', '127.0.0.1'], authorized_by: 'Demo Owner (self-hosted test target)',
+    authorization_evidence: 'DEMO DATA: loopback fixture owned by this workspace; see fixtures/vuln-app/server.js',
+    exclusions: [], ports: [8081, 8082], allow_private: true, authorized_at: new Date().toISOString(),
+  },
+  status: 'active', created_at: new Date().toISOString(),
+});
+// the fixture's marketing redirect chain → heavy deals page (performance demo target)
+const promoAsset = db.insert('assets', {
+  tenant_id: tenant.id, identifier: 'http://localhost:8081/promo', kind: 'web_host', title: 'Fixture promo campaign chain (perf demo target)', port: 8081,
+  authorization: {
+    status: 'verified', scope_domains: ['localhost', '127.0.0.1'], authorized_by: 'Demo Owner (self-hosted test target)',
+    authorization_evidence: 'DEMO DATA: loopback fixture owned by this workspace; see fixtures/vuln-app/server.js',
+    exclusions: [], ports: [8081], allow_private: true, authorized_at: new Date().toISOString(),
   },
   status: 'active', created_at: new Date().toISOString(),
 });
@@ -82,15 +102,27 @@ const automation = new AutomationEngine({ db, files, requestService: (o) => crea
 const scheduler = new Scheduler({ db, files, automation, requestService: (o) => createServiceRequest({ db, ...o }).job, generateReport: (o) => generateReport(db, files, o), intervalMs: 2500 });
 
 console.log('[seed] enqueueing real web_audit + security_full jobs against the fixture (real engine execution — this takes a moment)...');
-createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'web_audit', assetId: asset.id, params: { max_pages: 5 }, userId: owner.id });
-createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'sec_validation', assetId: asset.id, params: { profile: 'intrusive', max_pages: 20, test_username: 'admin', test_password: 'admin123!A' }, userId: owner.id });
-createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'sec_auth', assetId: asset.id, params: { profile: 'safe', test_username: 'admin', test_password: 'admin123!A' }, userId: owner.id });
-createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'sec_session', assetId: asset.id, params: { test_username: 'admin', test_password: 'admin123!A' }, userId: owner.id });
-createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'sec_authz', assetId: asset.id, params: { profile: 'standard', test_username: 'admin', test_password: 'admin123!A' }, userId: owner.id });
-createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'sec_upload', assetId: asset.id, params: { profile: 'intrusive' }, userId: owner.id });
+const seedCreds = { test_username: 'admin', test_password: 'admin123!A' };
+const seedJobs = [
+  [asset.id, 'web_audit', { max_pages: 15 }],
+  [asset.id, 'sec_validation', { profile: 'intrusive', max_pages: 20, ...seedCreds }],
+  [asset.id, 'sec_auth', { profile: 'safe', ...seedCreds }],
+  [asset.id, 'sec_auth', { profile: 'intrusive', ...seedCreds }],
+  [asset.id, 'sec_session', { profile: 'standard', ...seedCreds }],
+  [asset.id, 'sec_authz', { profile: 'standard', max_pages: 14, ...seedCreds }],
+  [asset.id, 'sec_upload', { profile: 'intrusive' }],
+  [asset.id, 'sec_config', { max_pages: 14 }],
+  [asset.id, 'sec_dos', { profile: 'intrusive' }],
+  [tlsAsset.id, 'web_audit', { max_pages: 10 }],
+  [tlsAsset.id, 'sec_transmission', {}],
+  [promoAsset.id, 'web_audit', { max_pages: 4 }],
+];
+for (const [assetId, serviceKey, params] of seedJobs) {
+  createServiceRequest({ db, tenantId: tenant.id, serviceKey, assetId, params, userId: owner.id });
+}
 
 let processed = 0;
-for (let i = 0; i < 300 && processed < 6; i++) {
+for (let i = 0; i < 400 && processed < seedJobs.length; i++) {
   await scheduler.tick();
   processed = db.store.count('jobs', (j) => ['COMPLETED', 'PARTIALLY_COMPLETED', 'FAILED'].includes(j.state));
 }

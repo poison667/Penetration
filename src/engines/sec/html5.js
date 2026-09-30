@@ -60,7 +60,7 @@ export const html5Engine = {
         const sw = await ctx.fetch(swUrl);
         if (sw.ok) {
           const swBody = sw.bodyText;
-          const wideScope = /fetch\s*\(\s*request/i.test(swBody) && !/self\.origin|url\.startsWith/i.test(swBody);
+          const wideScope = /fetch\s*\(\s*(?:event\.)?request/i.test(swBody) && !/self\.origin|url\.startsWith/i.test(swBody);
           ctx.report('H5-004', {
             severity: 'low', confidence: 'medium', endpoint: swUrl, target: ctx.asset.identifier,
             facts: [`Service worker registered at ${swUrl} (${sw.bodyBytes} bytes).`, wideScope ? 'Fetch handler appears to proxy all requests without origin filtering.' : 'Fetch handler includes origin checks.'],

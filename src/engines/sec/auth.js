@@ -131,7 +131,16 @@ export const authEngine = {
         ctx.report('ATH-011', { severity: 'info', confidence: 'confirmed', endpoint: loginUrl, target: ctx.asset.identifier, facts: ['No MFA mechanism detected on the login page.'], inference: ['Single-factor authentication only.'], evidence: [ctx.evidenceFrom(basePage.res, 'Login page markup')] });
       }
 
-      // ATH-002 reset-flow enumeration (probe reset endpoint existence)
+      // ATH-002 reset-flow enumeration (probe reset endpoint existence).
+      // Use addresses actually discovered on the site (mailto links / page text) as the
+      // "plausible account" side — a generic address cannot reveal an enumeration difference.
+      const discoveredEmails = new Set();
+      for (const source of [basePage, ...(ctx.state.crawl?.pages || []).map((p) => ({ res: { bodyText: (ctx.pages.get(p.url)?.res?.bodyText) || '' } }))]) {
+        const text = source?.res?.bodyText || '';
+        for (const m of text.matchAll(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi)) discoveredEmails.add(m[0].toLowerCase());
+        if (discoveredEmails.size >= 5) break;
+      }
+      const knownCandidates = [...discoveredEmails, 'known-user@example.org'];
       const resetPaths = ['/forgot-password', '/password-reset', '/reset-password', '/account/forgot'];
       for (const rp of resetPaths) {
         const resetUrl = new URL(rp, new URL(start).origin).toString();
@@ -139,11 +148,14 @@ export const authEngine = {
         if (!page.res.ok || !page.dom) continue;
         const rf = forms(page.dom, resetUrl).find((f) => f.fields.some((x) => /email|user/i.test(x.name || '')));
         if (rf) {
-          const ev1 = await ctx.fetch(resetUrl, { method: rf.method === 'POST' ? 'POST' : 'GET', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ [rf.fields[0].name]: 'known-user@example.org' }).toString() });
-          const ev2 = await ctx.fetch(resetUrl, { method: rf.method === 'POST' ? 'POST' : 'GET', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ [rf.fields[0].name]: `nouser-${Date.now()}@example.org` }).toString() });
-          const differs = ev1.status !== ev2.status || sha256(ev1.bodyText) !== sha256(ev2.bodyText);
+          let ev1 = null, ev2 = null, differs = false, knownAddr = knownCandidates[0];
+          for (const cand of knownCandidates.slice(0, 4)) {
+            ev1 = await ctx.fetch(resetUrl, { method: rf.method === 'POST' ? 'POST' : 'GET', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ [rf.fields[0].name]: cand }).toString() });
+            ev2 = await ctx.fetch(resetUrl, { method: rf.method === 'POST' ? 'POST' : 'GET', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ [rf.fields[0].name]: `nouser-${Date.now()}@example.org` }).toString() });
+            if (ev1.status !== ev2.status || sha256(ev1.bodyText) !== sha256(ev2.bodyText)) { differs = true; knownAddr = cand; break; }
+          }
           if (differs) {
-            ctx.report('ATH-002', { severity: 'medium', confidence: 'medium', endpoint: resetUrl, target: ctx.asset.identifier, facts: [`Reset request for a plausible address: HTTP ${ev1.status}, ${ev1.bodyBytes}B.`, `Reset request for a random address: HTTP ${ev2.status}, ${ev2.bodyBytes}B.`, 'Responses differ — account existence is disclosed.'], inference: ['Password reset can be used to enumerate accounts.'], evidence: [ctx.evidenceFrom(ev1, 'Reset request: plausible account'), ctx.evidenceFrom(ev2, 'Reset request: random account')] });
+            ctx.report('ATH-002', { severity: 'medium', confidence: 'medium', endpoint: resetUrl, target: ctx.asset.identifier, facts: [`Reset request for a discovered address (${knownAddr}): HTTP ${ev1.status}, ${ev1.bodyBytes}B.`, `Reset request for a random address: HTTP ${ev2.status}, ${ev2.bodyBytes}B.`, 'Responses differ — account existence is disclosed.'], inference: ['Password reset can be used to enumerate accounts.'], evidence: [ctx.evidenceFrom(ev1, 'Reset request: discovered account address'), ctx.evidenceFrom(ev2, 'Reset request: random address')] });
           }
           // ATH-008 reset token in URL (response analysis)
           if (/token=[A-Za-z0-9]{10,}/i.test(ev1.bodyText) && /<a\s+href=["'][^"']*token=/i.test(ev1.bodyText)) {

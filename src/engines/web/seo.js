@@ -79,6 +79,14 @@ export const seoEngine = {
     if (!sitemapRes.ok && !/sitemap:/i.test(robotsRes.bodyText || '')) {
       const ev = ctx.evidenceRaw('http_exchange', { robots_txt_status: robotsRes.status, sitemap_status: sitemapRes.status }, 'robots.txt and sitemap.xml availability');
       ctx.report('SEO-007', { severity: 'low', confidence: 'confirmed', endpoint: '/sitemap.xml', target: ctx.asset.identifier, facts: [`sitemap.xml returned HTTP ${sitemapRes.status}; robots.txt ${robotsRes.status}.`], inference: ['No sitemap discovered.'], evidence: [ev] });
+    } else if (/sitemap:\s*(\S+)/i.test(robotsRes.bodyText || '')) {
+      // a sitemap is declared in robots.txt — verify it is actually reachable
+      const declared = /sitemap:\s*(\S+)/i.exec(robotsRes.bodyText)[1];
+      const declaredRes = await ctx.fetch(declared);
+      if (!declaredRes.ok) {
+        const ev = ctx.evidenceRaw('http_exchange', { declared_sitemap: declared, status: declaredRes.status, error: declaredRes.error || null }, 'Declared sitemap reachability');
+        ctx.report('SEO-007', { severity: 'low', confidence: 'confirmed', endpoint: declared, target: ctx.asset.identifier, facts: [`robots.txt declares Sitemap: ${declared}, but fetching it failed (HTTP ${declaredRes.status || 'error'}${declaredRes.error ? ': ' + declaredRes.error.slice(0, 80) : ''}).`], inference: ['The declared sitemap is stale or points at the wrong host — crawlers cannot use it.'], evidence: [ev] });
+      }
     }
     // broken internal links (SEO-011) — sample up to 20 internal links
     const internal = (ctx.state.crawl?.links || []).filter((l) => !l.external).slice(0, 20);

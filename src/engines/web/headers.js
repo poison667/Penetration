@@ -30,6 +30,16 @@ export const headersEngine = {
       ctx.report('CFG-007', { ...base(), severity: 'medium', confidence: 'confirmed', facts: ['Neither X-Frame-Options nor CSP frame-ancestors is set.'], inference: ['The page can be embedded in third-party frames (clickjacking exposure).'], evidence: [ev()] });
     }
 
+    // Server banner / version disclosure (CFG-015)
+    const banners = [];
+    const serverH = h['server']?.[0];
+    const poweredBy = h['x-powered-by']?.[0];
+    if (serverH && /\d+\.\d+|nginx|apache|iis|lighttpd|tomcat|jetty|express|php|werkzeug/i.test(serverH)) banners.push(`Server: ${serverH}`);
+    if (poweredBy) banners.push(`X-Powered-By: ${poweredBy}`);
+    if (banners.length) {
+      ctx.report('CFG-015', { ...base(), severity: 'info', confidence: 'confirmed', facts: [`Technology/version banners disclosed: ${banners.join('; ')}.`], inference: ['Precise version disclosure helps attackers select known exploits — suppress banners.'], evidence: [ev()] });
+    }
+
     // HSTS (CFG-008) — only meaningful over HTTPS
     if (new URL(page.res.finalUrl).protocol === 'https:') {
       const hsts = h['strict-transport-security']?.[0];

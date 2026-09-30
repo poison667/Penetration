@@ -109,6 +109,46 @@ test('full pipeline: request → validate → execute → findings → evidence 
     const sqli = secFindings.find((f) => f.check_id === 'VAL-005');
     assert.ok(sqli, 'expected the error-based SQLi (VAL-005) to be genuinely detected on the fixture');
 
+    // TLS engine against the fixture's HTTPS endpoint (weak self-signed cert):
+    // hostname mismatch (TLS-005) + trust problem (TLS-006) + SHA-1 signature (TLS-004) must be detected
+    const tlsPort = fixture[1]?.address()?.port;
+    if (tlsPort) {
+      const tlsAsset = db.insert('assets', {
+        tenant_id: tenant.id, identifier: `https://127.0.0.1:${tlsPort}`, kind: 'web_host', title: 'Fixture TLS',
+        authorization: { status: 'verified', scope_domains: ['127.0.0.1'], authorized_by: 'test', exclusions: [], ports: [tlsPort], allow_private: true, authorized_at: new Date().toISOString() },
+        status: 'active', created_at: new Date().toISOString(),
+      });
+      const { job: tlsJob } = createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'sec_transmission', assetId: tlsAsset.id, params: {}, userId: owner.id });
+      let tlsFinal = null;
+      for (let i = 0; i < 80 && !tlsFinal; i++) {
+        await scheduler.tick();
+        const cur = db.byIdGlobal('jobs', tlsJob.id);
+        if (['COMPLETED', 'PARTIALLY_COMPLETED', 'FAILED'].includes(cur.state)) tlsFinal = cur;
+      }
+      assert.equal(tlsFinal.state, 'COMPLETED');
+      const tlsFindings = db.store.find('findings', (f) => f.job_id === tlsJob.id);
+      const tlsChecks = new Set(tlsFindings.map((f) => f.check_id));
+      assert.ok(tlsChecks.has('TLS-005'), 'expected cert hostname mismatch (TLS-005) on the fixture cert');
+      assert.ok(tlsChecks.has('TLS-006'), 'expected self-signed trust problem (TLS-006)');
+      assert.ok(tlsChecks.has('TLS-004'), 'expected SHA-1 signature detection (TLS-004) via DER parsing');
+    }
+
+    // authorization engine: the /file form must be probed for traversal despite
+    // unrelated fields like "username" competing for the probe budget (AUT-001 regression)
+    {
+      const { job: authzJob } = createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'sec_authz', assetId: asset.id, params: { profile: 'standard', max_pages: 14, test_username: 'admin', test_password: 'admin123!A' }, userId: owner.id });
+      let authzFinal = null;
+      for (let i = 0; i < 80 && !authzFinal; i++) {
+        await scheduler.tick();
+        const cur = db.byIdGlobal('jobs', authzJob.id);
+        if (['COMPLETED', 'PARTIALLY_COMPLETED', 'FAILED'].includes(cur.state)) authzFinal = cur;
+      }
+      assert.equal(authzFinal.state, 'COMPLETED');
+      const authzFindings = db.store.find('findings', (f) => f.job_id === authzJob.id);
+      const aut1 = authzFindings.find((f) => f.check_id === 'AUT-001');
+      assert.ok(aut1, 'expected the /file traversal (AUT-001) to be genuinely detected');
+    }
+
     // audit trail covers the pipeline actions
     const audit = db.store.find('audit', (a) => a.tenant_id === tenant.id);
     assert.ok(audit.length >= 2, 'expected audit entries for the pipeline run');

@@ -1,6 +1,7 @@
 import { URL } from 'node:url';
 import { COMMON_FILE_PROBES, ADMIN_PATH_PROBES } from '#lib/signatures';
 import { innerText } from '#lib/html';
+import { ensureCrawled } from '#lib/crawl';
 
 /** Engine: Configuration Management Testing. */
 export const configEngine = {
@@ -9,6 +10,9 @@ export const configEngine = {
   async run(ctx) {
     const start = new URL(ctx.asset.base_url || ctx.asset.identifier);
     const origin = start.origin;
+    // crawl in-scope pages so page-content checks (stack traces, sensitive HTML data)
+    // see real site pages, not just the entry page and probed paths
+    await ensureCrawled(ctx, { maxPages: ctx.params?.max_pages || 6 });
 
     // CFG-002/REC-003 exposed common files (safe GETs)
     for (const probe of COMMON_FILE_PROBES) {

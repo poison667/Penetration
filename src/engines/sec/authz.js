@@ -13,11 +13,17 @@ export const authzEngine = {
     const creds = ctx.params?.test_username && ctx.params?.test_password ? { u: ctx.params.test_username, p: ctx.params.test_password } : null;
 
     // AUT-001 path traversal on parameters (read-only signatures)
+    // Rank candidates: exact keyword names first, then keyword-prefixed (file_x), then
+    // loose substrings last — otherwise fields like "username" (ends with "name") or
+    // "xml_document" (contains "doc") starve the probe budget before real file params.
+    const KEYWORDS = /^(file|path|page|include|name|doc|template|filename|filepath|docpath|page_id|file_id)$/i;
+    const score = (n) => (KEYWORDS.test(n) ? 0 : /^(file|path|page|doc|template|include)[_-]/i.test(n) || /[-_](file|path|page|doc|template)$/i.test(n) ? 1 : 2);
     const traversalParams = [];
     for (const f of ctx.state.crawl?.forms || []) {
-      for (const field of f.fields) if (/file|path|page|include|name|doc|template/i.test(field.name || '')) traversalParams.push({ f, field });
+      for (const field of f.fields) if (/file|path|page|include|name|doc|template/i.test(field.name || '')) traversalParams.push({ f, field, rank: score(field.name || '') });
     }
-    for (const t of traversalParams.slice(0, 5)) {
+    traversalParams.sort((a, b) => a.rank - b.rank);
+    for (const t of traversalParams.slice(0, 6)) {
       const payload = '../../../../etc/passwd';
       const r = t.f.method === 'POST'
         ? await ctx.fetch(t.f.action, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ [t.field.name]: payload }).toString() })

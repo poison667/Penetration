@@ -62,18 +62,21 @@ export const perfEngine = {
       }
     }
 
-    // Caching (PRF-006) — check a static-ish asset
+    // Caching (PRF-006) — check a static-ish asset (first FETCHABLE candidate:
+    // pages often reference unreachable CDNs first; skip network errors, not the check)
     const cacheCtl = h['cache-control']?.[0];
     ctx.metrics.cache_control = cacheCtl || null;
     if (page.dom) {
-      const firstScript = getScripts(page.dom, start).find((s) => /\.(js|css)(\?|$)/.test(s.src || ''))?.src;
-      if (firstScript) {
-        const assetRes = await ctx.fetch(firstScript);
+      const candidates = getScripts(page.dom, start).map((s) => s.src).filter((src) => src && /\.(js|css)(\?|$)/.test(src)).slice(0, 5);
+      for (const cand of candidates) {
+        const assetRes = await ctx.fetch(cand);
+        if (!assetRes.ok) continue; // CDN unreachable — try the next candidate
         const ac = assetRes.headers['cache-control']?.[0];
         ctx.metrics.asset_cache_control = ac || null;
-        if (assetRes.ok && (!ac || !/(max-age=\d{5,}|immutable)/i.test(ac))) {
-          ctx.report('PRF-006', { ...base, endpoint: new URL(firstScript).pathname, severity: 'medium', confidence: 'confirmed', facts: [`Static asset ${firstScript} served with Cache-Control: ${ac || '(none)'}.`], inference: ['Long-lived caching with hashed filenames improves repeat visits.'], evidence: [ctx.evidenceFrom(assetRes, `Cache headers for ${firstScript}`)] });
+        if (!ac || !/(max-age=\d{5,}|immutable)/i.test(ac)) {
+          ctx.report('PRF-006', { ...base, endpoint: new URL(cand).pathname, severity: 'medium', confidence: 'confirmed', facts: [`Static asset ${cand} served with Cache-Control: ${ac || '(none)'}.`], inference: ['Long-lived caching with hashed filenames improves repeat visits.'], evidence: [ctx.evidenceFrom(assetRes, `Cache headers for ${cand}`)] });
         }
+        break;
       }
     }
 
