@@ -7,7 +7,7 @@ was performed on the workspace at `/home/user/meridian` (Node v20.20.2, Linux).
 
 - `npm test` → **203/203 passing, 29 files, ~70s** (live-generated breakdown: `docs/TEST_REPORT.md`).
 - Verification as a whole (suite + live probes + real browser + oracle audits) found
-  and fixed **37 real defects** in production source: 9 by the suite (tokenizer loop,
+  and fixed **39 real defects** in production source: 9 by the suite (tokenizer loop,
   ledger ordering, xlsx rels path, 3 cron defects, RAG chunk loss, session-family
   revocation, binary secret sealing, api-keys `require()` 500, dedupe null-key
   crash), 2 by real-browser verification (BillingView React-tree crash, missing
@@ -15,8 +15,10 @@ was performed on the workspace at `/home/user/meridian` (Node v20.20.2, Linux).
   full-catalog oracle audit (§3b5), 4 by the notification-delivery audit (§3b6),
   4 by the OCR audit (§3b7), 2 by the desktop build-input verification (§3b8),
   and 4 by the TOTP/MFA verification pass (§3b9). §3b10 then produced the real
-  Linux installers locally (no product defects; 5 build-environment gaps found
-  and closed). Details: TEST_REPORT.md + §3b3–§3b10 below.
+  Linux installers locally (5 build-environment gaps found and closed), and the
+  FIRST CI run on a fresh clone caught 2 more (§3b10 end): the unanchored
+  `data/` ignore that swallowed the `src/data/` engine layer, and a
+  CRLF-fragile multi-line check that failed only on windows runners. Details: TEST_REPORT.md + §3b3–§3b10 below.
 
 ## 2. End-to-end pipeline (no mocks)
 
@@ -458,3 +460,25 @@ Linux desktop installers).
 
 **Gate result: PASS** — with the documented limitations above, which are visible in
 the matrix, the report, and the UI rather than hidden.
+
+**Published (final state).** The repository is published at
+github.com/poison667/Penetration; the CI workflow runs green on both
+windows-latest and ubuntu-22.04 for the fixed commits (7896316, d1920b0):
+the test suite passes 203/203 **on a fresh clone**, all 30 desktop
+build-input checks pass **including on Windows** (after the CRLF fix), and
+the CI `build-desktop` job produced the **Windows NSIS .exe + WiX .msi**
+from the same shared codebase. Together with the locally-built and verified
+Linux installers, all five are attached to the **v1.0.0 release** with
+SHA-256 digests (installers/SHA256SUMS.txt + release notes). Two real
+defects were found by that first CI run and fixed in commit 7896316:
+
+- **#38 — unanchored `data/` gitignore pattern swallowed the data-workbench
+  engine layer** (`src/data/`, 7 modules incl. `xlsx.js` imported by the
+  report engine): the files existed in the build workspace, so every local
+  gate passed, but fresh clones (CI) failed with `ERR_MODULE_NOT_FOUND`.
+  Fixed by anchoring the pattern to `/data/` (runtime tenant state stays
+  ignored) and committing the missing modules.
+- **#39 — a CRLF-fragile multi-line regex in verify-desktop.mjs** (JS `.` does
+  not match `\r`): passed on Linux checkouts, failed 29/30 on windows-latest
+  where git autocrlf converts to CRLF. Fixed with `\r?`-tolerant matching and
+  a `.gitattributes` LF pin for the whole repo.
