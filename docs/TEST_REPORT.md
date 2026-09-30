@@ -1,6 +1,6 @@
 # Test Report — Meridian Platform
 
-Generated **live** by `npm run report:tests` (2026-09-30T12:17:36.295Z); nothing below is hand-maintained.
+Generated **live** by `npm run report:tests` (2026-09-30T13:48:55.471Z); nothing below is hand-maintained.
 
 ## Result
 
@@ -11,7 +11,7 @@ Generated **live** by `npm run report:tests` (2026-09-30T12:17:36.295Z); nothing
 | **Passing** | **203** |
 | Failing | 0 |
 | Cancelled / skipped | 0 / 0 |
-| Wall time | 70.7s |
+| Wall time | 70.8s |
 | Runner | `node --test` (Node built-in, zero test dependencies) |
 
 > ✅ **ALL PASSING**
@@ -22,18 +22,18 @@ Generated **live** by `npm run report:tests` (2026-09-30T12:17:36.295Z); nothing
 |---|---|---|---|---|
 | `ai-rag.test.js` | 6 | 6 | 0 | 0.1s |
 | `api-authn.test.js` | 6 | 6 | 0 | 0.5s |
-| `api-server.test.js` | 5 | 5 | 0 | 2.8s |
+| `api-server.test.js` | 5 | 5 | 0 | 2.4s |
 | `api-sse.test.js` | 1 | 1 | 0 | 0.8s |
 | `app-audit.test.js` | 6 | 6 | 0 | 0.1s |
 | `app-billing.test.js` | 8 | 8 | 0 | 0.1s |
 | `app-db.test.js` | 7 | 7 | 0 | 0.1s |
 | `automation-cron.test.js` | 7 | 7 | 0 | 0.1s |
-| `automation-workflow.test.js` | 4 | 4 | 0 | 0.1s |
+| `automation-workflow.test.js` | 4 | 4 | 0 | 0.2s |
 | `core-expr.test.js` | 12 | 12 | 0 | 0.1s |
 | `core-util.test.js` | 14 | 14 | 0 | 0.1s |
 | `core-validate.test.js` | 18 | 18 | 0 | 0.1s |
 | `data-workbench.test.js` | 10 | 10 | 0 | 0.1s |
-| `docint-ocr.test.js` | 8 | 8 | 0 | 2.1s |
+| `docint-ocr.test.js` | 8 | 8 | 0 | 2.4s |
 | `docint.test.js` | 8 | 8 | 0 | 0.1s |
 | `engines-checks.test.js` | 6 | 6 | 0 | 0.1s |
 | `engines-framework.test.js` | 5 | 5 | 0 | 0.1s |

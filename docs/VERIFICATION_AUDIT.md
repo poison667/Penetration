@@ -14,8 +14,9 @@ was performed on the workspace at `/home/user/meridian` (Node v20.20.2, Linux).
   evidence-list route), 4 by the validation-oracle audit (§3b4), 8 by the
   full-catalog oracle audit (§3b5), 4 by the notification-delivery audit (§3b6),
   4 by the OCR audit (§3b7), 2 by the desktop build-input verification (§3b8),
-  and 4 by the TOTP/MFA verification pass (§3b9). Details: TEST_REPORT.md +
-  §3b3–§3b9 below.
+  and 4 by the TOTP/MFA verification pass (§3b9). §3b10 then produced the real
+  Linux installers locally (no product defects; 5 build-environment gaps found
+  and closed). Details: TEST_REPORT.md + §3b3–§3b10 below.
 
 ## 2. End-to-end pipeline (no mocks)
 
@@ -271,6 +272,93 @@ in the MFA login test. Chasing it exposed a chain of four real defects:
 
 Verified stable: the full api-server file 8/8 clean and the MFA test 15/15
 clean across repeated runs spanning multiple 30-second step boundaries.
+
+## 3b10. Real Linux installers built and verified locally (R-3.11 closed)
+
+The single remaining PARTIAL requirement (R-3.11 — actual installer binaries)
+was closed by building the installers **for real, in this workspace**, with no
+root access, using a user-space WebKitGTK sysroot.
+
+**Build (one codebase, one command, exit 0):** `cd apps/desktop && npx
+@tauri-apps/cli@2 build --bundles deb,rpm,appimage` under rustc 1.98.1 /
+tauri-cli 2.12.0, with a 146-package Debian trixie apt closure (`--no-install-
+recommends`: libwebkit2gtk-4.1-dev 2.52.6, gtk+ 3.24.49, librsvg, patchelf)
+extracted via `dpkg-deb -x` into `~/gtkroot` and wired up via `PKG_CONFIG_PATH`
+(.pc files rewritten to absolute paths), `LD_LIBRARY_PATH`, and `PATH`. Output:
+`Finished 3 bundles at:` **Meridian Platform_1.0.0_amd64.deb (2.80 MiB) ·
+Meridian Platform-1.0.0-1.x86_64.rpm (2.80 MiB) · Meridian Platform_1.0.0_
+amd64.AppImage (96.89 MiB)** — copied with SHA-256 checksums to
+`/home/user/installers/` (recipe + transcript: `installers/BUILD_INFO.md`).
+
+**Five build-environment gaps found and closed** (none were product-code
+defects; each initially failed the build loudly — no silent degradation):
+
+1. **Static-archive shadowing broke the final link.** The sysroot's
+   `libdbus-1.a` (from the -dev closure) shadowed the system shared libdbus,
+   and the static archive references `sd_listen_fds`/`sd_is_socket`
+   (libsystemd) → `rust-lld: undefined symbol`. Fix: sysroot `.so` symlinks to
+   the system shared libs for every `.a`-only shadow (11 libs, notably
+   `libdbus-1.so` → system 3.38.3). After that the entire ~450-crate tree
+   linked clean.
+2. **`mksquashfs` missing** (headless image, no squashfs-tools) — linuxdeploy's
+   appimage plugin needs it. The tauri CLI swallows linuxdeploy's stderr at
+   default log level, so this was located by re-running tauri's exact
+   linuxdeploy invocation manually (`--verbosity 0`). Fix: user-space
+   `squashfs-tools` extracted into the sysroot and put on PATH.
+3. **The AppImage needed `APPIMAGE_EXTRACT_AND_RUN=1`** (no FUSE in the
+   sandbox) — inherited through the bundler to linuxdeploy and its plugins.
+4. **tauri's embedded `linuxdeploy-plugin-gtk.sh` searches SYSTEM paths** for
+   GTK modules (`/usr/lib/x86_64-linux-gnu/gtk-3.0` — absent on this headless
+   image). It honors two overrides, both now used: `LD_GTK_LIBRARY_PATH`
+   → sysroot libdir (module trees: gtk-3.0, gio/modules, typelibs), and
+   `PKG_CONFIG_PATH` (all `--variable` lookups resolve to sysroot paths).
+5. **Module-cache tools are fatal-if-missing** (`set -e` + unconditional
+   `sed` on the cache files): `gtk-query-immodules-3.0`,
+   `gdk-pixbuf-query-loaders`, `gio-querymodules` were fetched into the
+   sysroot (libgtk-3-0 / libgdk-pixbuf-2.0-0 / libglib2.0-bin) and exposed on
+   PATH, so the AppImage ships **real generated** `immodules.cache`
+   (gtk+ 3.24.49) and `loaders.cache` (incl. the librsvg SVG loader).
+
+**Verification of the artifacts (structural — the sandbox has no display, so
+the GUI was not launched; see L-2):**
+
+- **DEB** — `dpkg-deb -I`: `meridian-platform` 1.0.0 amd64, `Depends:
+  libwebkit2gtk-4.1-0, libgtk-3-0`; `dpkg-deb -c`: `/usr/bin/meridian-desktop`
+  (11,062,648 B), hicolor icons 32/128/256/256@2, desktop entry.
+- **RPM** — `rpm2cpio | cpio -it`: binary + desktop entry + all 4 icon sizes.
+- **AppImage** — `--appimage-extract`: AppRun, AppRun.wrapped,
+  `apprun-hooks/linuxdeploy-plugin-gtk.sh`, .desktop, .DirIcon, binary, **196
+  bundled shared libs**, real immodules/loaders caches. `ldd` against the
+  extracted tree: **143 dependencies resolve inside the AppImage**; the only
+  external is `libasound.so.2`, which is on **linuxdeploy's embedded
+  system-lib exclusion list** (upstream policy: ALSA is base-system on
+  desktops; the deb/rpm pull it transitively via the distro webkit package).
+- **ELF** — `file`: 64-bit x86-64 **PIE**; `objdump -p`: DT_NEEDED =
+  libwebkit2gtk-4.1.so.0, libgtk-3.so.0, libsoup-3.0.so.0,
+  libjavascriptcoregtk-4.1.so.0, gio/glib/gobject/gdk/cairo/pixbuf/dbus (…).
+- **Shared-SPA invariant holds in the shipped binary**: `strings` finds
+  `assets/index-CHJYQdlS.js` + `assets/index-BAjiAVxf.css` — the deterministic
+  vite hashes identical to the committed `webroot/` (§3b8), i.e. the desktop
+  installers embed the exact SPA the web client serves.
+
+Windows .exe (NSIS) / .msi (WiX) remain CI-built per the committed workflow
+(no Windows runner or wine locally — D4 addendum, L-2). GUI install/run
+testing on a real Linux desktop remains an open item, recorded in L-2.
+
+**Windows cross-compile attempt (made, and honestly resource-blocked).** A
+serious local attempt to also produce the NSIS .exe was made with
+`cargo-xwin` 0.23.1 (rustc target `x86_64-pc-windows-msvc`, xwin-downloaded
+MSVC CRT + Windows SDK, clang-cl 19.1.7 + LLVM tools in the user-space
+sysroot). The full Windows dependency tree resolved and compiled for ~10
+minutes, then rustc was **killed by the OOM killer (SIGKILL) while compiling
+the `windows` 0.62.2 crate** — its metadata pass exceeds what the sandbox's
+2 GB RAM can hold even with `CARGO_BUILD_JOBS=1`. This is a hard resource
+ceiling of this workspace, not a toolchain gap: the recipe is recorded here
+so it can be re-run unchanged on any machine with ≥4 GB RAM, and the
+committed CI workflow (windows-latest runner) builds the same NSIS/MSI
+targets with the same one shared codebase. No Windows binary exists locally;
+none is claimed.
+
 
 ## 3b2. Live client↔server contract probe
 
