@@ -114,7 +114,7 @@ for (const [label, glob] of [['.exe', '**/*.exe'], ['.msi', '**/*.msi'], ['AppIm
 }
 check('CI regenerates icons before bundling', /run: npm run gen:icons/.test(ci));
 check('CI runs this verification before spending build minutes', /run: npm run verify:desktop/.test(ci));
-check('CI test job installs dependencies (real OCR engine in CI)', /Install dependencies.*\n\s*run: npm install --no-audit --no-fund/.test(ci));
+check('CI test job installs dependencies (real OCR engine in CI)', /Install dependencies.*\r?\n\s*run: npm install --no-audit --no-fund/.test(ci));
 check('desktop README documents the shared-codebase build', existsSync(path.join(root, 'apps/desktop/README.md')));
 
 const failed = results.filter((r) => !r.ok);

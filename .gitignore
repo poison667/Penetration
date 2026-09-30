@@ -7,7 +7,7 @@ webroot/
 apps/client/dist/
 
 # runtime state — never commit tenant data, keys or ledgers
-data/
+/data/
 *.log
 
 # desktop build output
