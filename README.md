@@ -16,7 +16,7 @@ end-to-end pipeline run against a deliberately-vulnerable in-process fixture.
 npm install --prefix apps/client   # build-time only (client toolchain)
 npm run seed:dev                   # demo tenant: real engine runs against the live fixture
 npm start                          # API + worker + scheduler + UI on http://localhost:8080
-npm run verify                     # FINAL GATE: suite → live docs → 13 live-instance checks
+npm run verify                     # FINAL GATE: suite → live docs → desktop build inputs → 15 live-instance checks
 ```
 
 Demo accounts (seeded): `demo@meridian.local` / `Demo!Passw0rd` (owner) and

@@ -8,12 +8,14 @@ on:
 
 jobs:
   test:
-    name: Test suite (182 tests, zero deps)
+    name: Test suite (real OCR engine included via optional dependency)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
+      - name: Install dependencies (incl. optional OCR engine — offline language data is vendored)
+        run: npm install --no-audit --no-fund
       - name: Run test suite
         run: npm test
       - name: Generate test report (live numbers)
@@ -51,10 +53,10 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            targets: nsis msi
+            bundles: nsis,msi
             label: windows
           - os: ubuntu-22.04
-            targets: appimage deb rpm
+            bundles: appimage,deb,rpm
             label: linux
     runs-on: ${{ matrix.os }}
     steps:
@@ -73,11 +75,13 @@ jobs:
           npm --prefix apps/client run build
       - name: Generate application icons
         run: npm run gen:icons
+      - name: Verify desktop build inputs (config, icons, shared-SPA invariant, CI wiring)
+        run: npm run verify:desktop
       - name: Build desktop installers
         uses: tauri-apps/tauri-action@v0
         with:
           projectPath: apps/desktop
-          args: --target all
+          args: --bundles ${{ matrix.bundles }}
       - uses: actions/upload-artifact@v4
         with:
           name: meridian-desktop-${{ matrix.label }}

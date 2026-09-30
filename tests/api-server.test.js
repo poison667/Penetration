@@ -116,9 +116,9 @@ test('API server: login, auth enforcement, RBAC, tenant isolation, secure header
     // unknown route without auth still 404 (routing precedes auth for unknown paths)
     assert.equal((await api(port, '/api/v1/nonexistent')).status, 404);
 
+  } finally {
     h.server.close();
     h.store.close();
-  } finally {
     rmSync(h.dir, { recursive: true, force: true });
   }
 });
@@ -148,9 +148,9 @@ test('API server: API key creation, listing and scoped use', async () => {
     const viaKey = await fetch(`http://127.0.0.1:${port}/api/v1/auth/me`, { headers: { authorization: `Bearer ${created.json.key}` } });
     assert.equal(viaKey.status, 200);
 
+  } finally {
     h.server.close();
     h.store.close();
-  } finally {
     rmSync(h.dir, { recursive: true, force: true });
   }
 });
@@ -181,20 +181,25 @@ test('API server: MFA challenge + TOTP verification on login', async () => {
     assert.equal(chal.json.mfa_required, true);
     assert.ok(!chal.json.access_token, 'no token may be issued before TOTP');
 
-    // valid TOTP completes login — use the NEXT step window: the enable code was consumed (replay protection)
-    const nextCode = totpNow(secret, { atMs: Date.now() + 31_000 });
+    // valid TOTP completes login — deterministic next step window (the enable code's counter is persisted:
+    // replay protection means that code can never succeed again, so the next one is used)
+    const nextStep = (Math.floor(Date.now() / 30_000) + 1) * 30_000;
+    const nextCode = totpNow(secret, { atMs: nextStep + 1_000 }); // 1s into the next step — exactly +1, never +2
     const done = await api(port, '/api/v1/auth/login', { method: 'POST', body: { email: 'owner@x.co', password: 'Owner!Pass1A', totp: nextCode } });
     assert.equal(done.status, 200);
     assert.ok(done.json.access_token || done.json.accessToken, 'TOTP login must yield tokens');
+
+    // replay: the SAME code must never work twice (the server persists the last-used counter)
+    const replay = await api(port, '/api/v1/auth/login', { method: 'POST', body: { email: 'owner@x.co', password: 'Owner!Pass1A', totp: nextCode } });
+    assert.equal(replay.status, 401, 'used TOTP code must be rejected (replay protection)');
 
     // wrong TOTP fails (pick 6 digits guaranteed different from the real next-window code)
     const wrong = nextCode === '000000' ? '000001' : '000000';
     const bad = await api(port, '/api/v1/auth/login', { method: 'POST', body: { email: 'owner@x.co', password: 'Owner!Pass1A', totp: wrong } });
     assert.equal(bad.status, 401);
-
+  } finally {
     h.server.close();
     h.store.close();
-  } finally {
     rmSync(h.dir, { recursive: true, force: true });
   }
 });
@@ -313,9 +318,9 @@ test('API server: document OCR — upload image, extract text, request without a
     assert.equal((await api(port, '/api/v1/documents', { token: viewerTok })).status, 200, 'viewer may list documents');
     assert.equal((await api(port, `/api/v1/documents/${doc.id}/extract`, { method: 'POST', token: viewerTok, body: {} })).status, 403, 'viewer must not run extraction');
 
+  } finally {
     h.server.close();
     h.store.close();
-  } finally {
     rmSync(h.dir, { recursive: true, force: true });
   }
 });

@@ -42,12 +42,21 @@ test('TOTP verifies the current code and rejects replay/incorrect codes', () => 
   assert.equal(secret.length, 20); // 160-bit
   const code = totpNow(secret);
   assert.match(code, /^\d{6}$/);
-  assert.equal(verifyTotp(secret, code), true);
-  assert.equal(verifyTotp(secret, '000000'), code === '000000');
-  assert.equal(verifyTotp(secret, 'abc'), false);
+  assert.ok(verifyTotp(secret, code) !== null, 'valid code returns the matched counter');
+  assert.equal(verifyTotp(secret, '000000') === null, code !== '000000');
+  assert.equal(verifyTotp(secret, 'abc'), null);
   // ±1 step drift accepted
   const drifted = hotp(secret, Math.floor(Date.now() / 1000 / 30) - 1);
-  assert.equal(verifyTotp(secret, drifted), true);
+  assert.ok(verifyTotp(secret, drifted) !== null, '±1 step drift accepted');
+  // replay protection: a code at/below the last-used counter is rejected forever
+  const used = verifyTotp(secret, code);
+  assert.ok(Number.isInteger(used));
+  assert.equal(verifyTotp(secret, code, { lastCounter: used }), null, 'same code cannot be replayed');
+  const older = totpNow(secret, { atMs: Date.now() - 60_000 });
+  assert.equal(verifyTotp(secret, older, { lastCounter: used }), null, 'older-window codes rejected once a newer one was used');
+  const nextStep = (Math.floor(Date.now() / 30_000) + 1) * 30_000; // deterministic: exactly one step ahead
+  const newer = totpNow(secret, { atMs: nextStep + 1_000 });
+  assert.ok(verifyTotp(secret, newer, { lastCounter: used }) !== null, 'next-window code accepted (within ±1 drift, above last-used counter)');
 });
 
 test('otpauthUrl produces a well-formed provisioning URI', () => {

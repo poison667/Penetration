@@ -33,7 +33,7 @@ for (const dir of [path.join(root, 'apps/client/public'), path.join(root, 'webro
 fs.writeFileSync(path.join(root, 'apps/client/public/logo.svg'), logo);
 
 /** Minimal dependency-free PNG writer (RGBA, no interlace). */
-function writePng(file, width, height, rgba) {
+export function pngBytes(width, height, rgba) {
   const chunk = (type, data) => {
     const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
     const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
@@ -52,17 +52,43 @@ function writePng(file, width, height, rgba) {
     raw[y * (width * 4 + 1)] = 0; // filter: none
     rgba.copy(raw, y * (width * 4 + 1) + 1, y * width * 4, (y + 1) * width * 4);
   }
-  const png = Buffer.concat([
+  return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     chunk('IHDR', ihdr),
     chunk('IDAT', zlib.deflateSync(raw)),
     chunk('IEND', Buffer.alloc(0)),
   ]);
-  fs.writeFileSync(file, png);
+}
+export function writePng(file, width, height, rgba) {
+  fs.writeFileSync(file, pngBytes(width, height, rgba));
+}
+
+/**
+ * Windows .ico (PNG-compressed entries — supported since Vista, required by
+ * Tauri's NSIS/MSI bundlers). Sizes: 16, 32, 48, 256 (256 stored as 0 in the
+ * directory byte, per the ICO spec).
+ */
+export function icoBytes(sizes, render) {
+  const pngs = sizes.map((size) => ({ size, png: pngBytes(size, size, render(size)) }));
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0); header.writeUInt16LE(1, 2); header.writeUInt16LE(sizes.length, 4); // reserved, type=icon, count
+  const entries = [];
+  let offset = 6 + 16 * sizes.length;
+  const dir = Buffer.alloc(16 * sizes.length);
+  pngs.forEach(({ size, png }, i) => {
+    const e = dir.subarray(i * 16, (i + 1) * 16);
+    e[0] = size >= 256 ? 0 : size; e[1] = size >= 256 ? 0 : size;
+    e[2] = 0; e[3] = 0;                      // palette / reserved
+    e.writeUInt16LE(1, 4); e.writeUInt16LE(32, 6); // planes / bit count
+    e.writeUInt32LE(png.length, 8); e.writeUInt32LE(offset, 12);
+    entries.push(png);
+    offset += png.length;
+  });
+  return Buffer.concat([header, dir, ...entries]);
 }
 
 /** Render the Meridian mark (ring + meridian ellipse) at a given size. */
-function renderMark(size) {
+export function renderMark(size) {
   const bg = [29, 45, 68];      // deep slate
   const ring = [127, 163, 207]; // steel blue
   const px = [232, 238, 245];   // near-white
@@ -103,9 +129,18 @@ function renderMark(size) {
   return rgba;
 }
 
-const iconDir = path.join(root, 'apps/desktop/src-tauri/icons');
-fs.mkdirSync(iconDir, { recursive: true });
-for (const [name, size] of [['32x32.png', 32], ['128x128.png', 128], ['128x128@2x.png', 256], ['icon.png', 256]]) {
-  writePng(path.join(iconDir, name), size, size, renderMark(size));
+export function writeAllIcons() {
+  const iconDir = path.join(root, 'apps/desktop/src-tauri/icons');
+  fs.mkdirSync(iconDir, { recursive: true });
+  for (const [name, size] of [['32x32.png', 32], ['128x128.png', 128], ['128x128@2x.png', 256], ['icon.png', 256]]) {
+    writePng(path.join(iconDir, name), size, size, renderMark(size));
+  }
+  // Windows installers (NSIS/MSI) require an .ico in the bundle icon list
+  fs.writeFileSync(path.join(iconDir, 'icon.ico'), icoBytes([16, 32, 48, 256], renderMark));
 }
-console.log('[icons] favicon.svg + logo.svg (client) and 4 PNG app icons (desktop) written');
+
+const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  writeAllIcons();
+  console.log('[icons] favicon.svg + logo.svg (client), 4 PNG app icons + icon.ico (desktop) written');
+}

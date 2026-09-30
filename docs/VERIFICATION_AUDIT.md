@@ -7,13 +7,15 @@ was performed on the workspace at `/home/user/meridian` (Node v20.20.2, Linux).
 
 - `npm test` → **203/203 passing, 29 files, ~70s** (live-generated breakdown: `docs/TEST_REPORT.md`).
 - Verification as a whole (suite + live probes + real browser + oracle audits) found
-  and fixed **31 real defects** in production source: 9 by the suite (tokenizer loop,
+  and fixed **37 real defects** in production source: 9 by the suite (tokenizer loop,
   ledger ordering, xlsx rels path, 3 cron defects, RAG chunk loss, session-family
   revocation, binary secret sealing, api-keys `require()` 500, dedupe null-key
   crash), 2 by real-browser verification (BillingView React-tree crash, missing
   evidence-list route), 4 by the validation-oracle audit (§3b4), 8 by the
   full-catalog oracle audit (§3b5), 4 by the notification-delivery audit (§3b6),
-  and 4 by the OCR audit (§3b7). Details: TEST_REPORT.md + §3b3–§3b7 below.
+  4 by the OCR audit (§3b7), 2 by the desktop build-input verification (§3b8),
+  and 4 by the TOTP/MFA verification pass (§3b9). Details: TEST_REPORT.md +
+  §3b3–§3b9 below.
 
 ## 2. End-to-end pipeline (no mocks)
 
@@ -208,6 +210,68 @@ This round exposed **four more real defects** (fixed):
   API even though `createServiceRequest` explicitly exempts them. `asset_id` is
   now optional; the per-service requirement is enforced server-side.
 
+## 3b8. Desktop build-input verification: installers made CI-safe
+
+The desktop requirement (R-3.11) cannot produce binaries in this sandbox (no
+Rust toolchain, no system WebKitGTK — D4/L-2), so the remaining risk was CI
+discovering a broken build only after spending runner minutes. A new gate step,
+`npm run verify:desktop` (30 checks), verifies every build input statically:
+tauri.conf.json structure and identifiers, bundle targets for all five installer
+formats, icon existence/dimensions AND byte-identity with the deterministic
+generator, a valid `.ico`, the shared-SPA invariant (the desktop bundle embeds
+the same `webroot/` the web deployment serves, rebuilt by `beforeBuildCommand`),
+the shell crate wiring, and the CI workflow itself (both OS legs, system deps,
+explicit per-OS `--bundles`, artifact globs for all five formats).
+
+Its first run caught **two real defects** (both fixed, gate green):
+- **no `.ico` icon existed** — Tauri's Windows bundlers (NSIS/MSI) require one;
+  the `windows-latest` CI leg would have failed at bundle time. A zero-
+  dependency ICO writer (PNG-compressed 16/32/48/256 entries) was added to
+  `scripts/gen-icons.js` and `icon.ico` is now listed in the bundle config.
+- **`frontendDist` was `"../../webroot"`** — Tauri resolves it relative to
+  `tauri.conf.json` (in `src-tauri/`), so it pointed at the nonexistent
+  `apps/webroot`; the desktop bundle would have embedded nothing. Fixed to
+  `../../../webroot` (verified semantics against upstream Tauri documentation
+  and issue reports), and the check now pins the resolution rule.
+
+The CI workflow was hardened in the same pass: per-OS `--bundles` instead of
+`--target all`, `npm run verify:desktop` runs before `tauri-action` on both
+legs, and the test job installs dependencies so CI exercises the real OCR
+engine (previously it ran in honest-absence mode) with the vendored offline
+language data. R-3.11 remains Partial — installers are CI-produced — but every
+input the CI build consumes is now verified by the same gate that tests the
+platform.
+
+## 3b9. TOTP replay protection + MFA test determinism
+
+While hardening the desktop gate (§3b8), a full-gate run failed intermittently
+in the MFA login test. Chasing it exposed a chain of four real defects:
+
+- **`verifyTotp` documented replay protection that did not exist.** Its comment
+  promised "consumes codes to prevent replay"; nothing consumed anything — an
+  intercepted TOTP code stayed valid for its whole ±90s acceptance window.
+  Implemented for real: `verifyTotp` now returns the matched counter and rejects
+  counters at/below a caller-supplied `lastCounter`, persisted on the user
+  record at all three verification sites (login, enable, disable). A used code
+  can never succeed again; unit + API tests assert the replay rejection.
+- **A stale-spread write clobbered the counter** moments after it was persisted:
+  the login route wrote `mfa_last_counter`, then overwrote the user record from
+  the pre-MFA `user` object for `last_login_at`, silently dropping the new field.
+  Caught immediately by the new replay assertion (the "fixed" code replayed
+  successfully, 100% reproducible). The route now performs one merged write.
+- **The MFA test computed its next-window code as `Date.now() + 31s`** — which
+  lands TWO steps ahead (outside the ±1 acceptance window) whenever the test
+  runs in the last second of a 30s step (~3% of runs, measured). Replaced with
+  step-boundary-aligned math that is exactly +1 at any wall-clock offset.
+- **Failing tests hung the whole file**: `server.close()` sat inside `try`, so
+  any assertion failure leaked the listener and the process had to be killed —
+  surfacing as "file killed" instead of "test failed" (the report generator
+  from §3b7 then correctly flagged it, but the real failure was obscured).
+  All api-server tests now close their servers in `finally`.
+
+Verified stable: the full api-server file 8/8 clean and the MFA test 15/15
+clean across repeated runs spanning multiple 30-second step boundaries.
+
 ## 3b2. Live client↔server contract probe
 
 Every POST payload the SPA sends was executed against the running server:
@@ -267,11 +331,11 @@ from the source tree at generation time.
 ## 6b. One-command gate
 
 `npm run verify` chains everything: full suite → live-generated TEST_REPORT.md →
-live-generated coverage matrix → **13 live-instance checks** (health, UI bundle,
-anonymous-auth rejection, SSE gate + stream, login, session, catalog, executed
-jobs, findings-with-evidence, report download, fixture). Current run:
-**185/185 tests + 13/13 live checks passed**. It exits non-zero on any failure
-and never fabricates success.
+live-generated coverage matrix → client build + **30 desktop build-input checks**
+→ **15 live-instance checks** (health, UI bundle, anonymous-auth rejection, SSE
+gate + stream, login, session, catalog, executed jobs, findings-with-evidence,
+report download, signed webhook delivery, live OCR through the API, fixture). It
+exits non-zero on any failure and never fabricates success.
 
 ## 7. Re-verification commands
 

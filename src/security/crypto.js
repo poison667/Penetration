@@ -104,14 +104,19 @@ export function hotp(secretBuf, counter, digits = 6) {
 export function totpNow(secretBuf, { step = 30, digits = 6, atMs = Date.now() } = {}) {
   return hotp(secretBuf, Math.floor(atMs / 1000 / step), digits);
 }
-/** Verify TOTP with ±1 step window; returns boolean; consumes codes to prevent replay. */
-export function verifyTotp(secretBuf, code, { step = 30, digits = 6, atMs = Date.now() } = {}) {
-  if (!/^\d{6}$/.test(String(code))) return false;
+/** Verify TOTP with ±1 step window. Returns the matched counter (persist it as
+ * the user's last-used counter) or null. Replay protection: counters at or
+ * below `lastCounter` are rejected — a code that already succeeded can never
+ * succeed again. */
+export function verifyTotp(secretBuf, code, { step = 30, digits = 6, atMs = Date.now(), lastCounter = -Infinity } = {}) {
+  if (!/^\d{6}$/.test(String(code))) return null;
   const counter = Math.floor(atMs / 1000 / step);
   for (const drift of [0, -1, 1]) {
-    if (hotp(secretBuf, counter + drift, digits) === String(code)) return true;
+    const c = counter + drift;
+    if (c <= lastCounter) continue;
+    if (hotp(secretBuf, c, digits) === String(code)) return c;
   }
-  return false;
+  return null;
 }
 export function otpauthUrl(email, secretB32) {
   const label = encodeURIComponent(`Meridian:${email}`);

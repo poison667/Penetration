@@ -42,13 +42,16 @@ export function registerCoreRoutes(router, app) {
     const user = verifyLoginCredentials(db, body.email, body.password);
     // uniform response timing/content to avoid user enumeration on our own platform
     if (!user) { await new Promise((r) => setTimeout(r, 150 + Math.random() * 100)); throw unauthorized('invalid credentials'); }
+    const updates = {}; // accumulated so the final write cannot clobber earlier fields (a stale spread here silently dropped mfa_last_counter)
     if (user.mfa_enabled) {
       if (!body.totp) return ctx.respond(200, { mfa_required: true });
       const secret = openSecret(user.mfa_secret || '');
-      if (!secret || !verifyTotp(secret, body.totp)) throw unauthorized('invalid credentials');
+      const counter = secret ? verifyTotp(secret, body.totp, { lastCounter: user.mfa_last_counter ?? -1 }) : null;
+      if (counter === null) throw unauthorized('invalid credentials');
+      updates.mfa_last_counter = counter; // replay protection: this code can never work again
     }
     const tokens = createSession(db, user, { userAgent: ctx.req.headers['user-agent'], ip: ctx.ip });
-    db.store.put('users', { ...user, last_login_at: nowIso() });
+    db.store.put('users', { ...user, ...updates, last_login_at: nowIso() });
     recordAudit(db.store, { tenantId: user.tenant_id, actorType: 'user', actorId: user.id, action: 'auth.login', resource: 'user', resourceId: user.id, detail: { ip: ctx.ip } });
     setSessionCookie(ctx, tokens.accessToken);
     ctx.respond(200, { user: publicUser(user), access_token: tokens.accessToken, refresh_token: tokens.refreshToken, expires_in: tokens.expiresIn });
@@ -92,8 +95,9 @@ export function registerCoreRoutes(router, app) {
     const user = db.byIdGlobal('users', ctx.auth.user.id);
     const secret = openSecret(user.mfa_pending || '');
     if (!secret) throw badRequest('run mfa/setup first');
-    if (!verifyTotp(secret, body.code)) throw badRequest('invalid TOTP code');
-    db.store.put('users', { ...user, mfa_enabled: true, mfa_secret: user.mfa_pending, mfa_pending: null });
+    const counter = verifyTotp(secret, body.code, { lastCounter: user.mfa_last_counter ?? -1 });
+    if (counter === null) throw badRequest('invalid TOTP code');
+    db.store.put('users', { ...user, mfa_enabled: true, mfa_secret: user.mfa_pending, mfa_pending: null, mfa_last_counter: counter });
     recordAudit(db.store, { tenantId: user.tenant_id, actorType: 'user', actorId: user.id, action: 'auth.mfa_enabled', resource: 'user', resourceId: user.id });
     ctx.respond(200, { ok: true, mfa_enabled: true });
   });
@@ -103,8 +107,9 @@ export function registerCoreRoutes(router, app) {
     const user = db.byIdGlobal('users', ctx.auth.user.id);
     if (!verifyPassword(body.password, user.password_hash)) throw unauthorized('invalid credentials');
     const secret = openSecret(user.mfa_secret || '');
-    if (!secret || !verifyTotp(secret, body.code)) throw badRequest('invalid TOTP code');
-    db.store.put('users', { ...user, mfa_enabled: false, mfa_secret: null });
+    const counter = secret ? verifyTotp(secret, body.code, { lastCounter: user.mfa_last_counter ?? -1 }) : null;
+    if (counter === null) throw badRequest('invalid TOTP code');
+    db.store.put('users', { ...user, mfa_enabled: false, mfa_secret: null, mfa_last_counter: counter });
     recordAudit(db.store, { tenantId: user.tenant_id, actorType: 'user', actorId: user.id, action: 'auth.mfa_disabled', resource: 'user', resourceId: user.id });
     ctx.respond(200, { ok: true, mfa_enabled: false });
   });
