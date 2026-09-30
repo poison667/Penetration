@@ -83,7 +83,7 @@ const scheduler = new Scheduler({ db, files, automation, requestService: (o) => 
 
 console.log('[seed] enqueueing real web_audit + security_full jobs against the fixture (real engine execution — this takes a moment)...');
 createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'web_audit', assetId: asset.id, params: { max_pages: 5 }, userId: owner.id });
-createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'sec_validation', assetId: asset.id, params: { profile: 'standard', max_pages: 8, test_username: 'admin', test_password: 'admin123!A' }, userId: owner.id });
+createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'sec_validation', assetId: asset.id, params: { profile: 'intrusive', max_pages: 20, test_username: 'admin', test_password: 'admin123!A' }, userId: owner.id });
 createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'sec_auth', assetId: asset.id, params: { profile: 'safe', test_username: 'admin', test_password: 'admin123!A' }, userId: owner.id });
 createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'sec_session', assetId: asset.id, params: { test_username: 'admin', test_password: 'admin123!A' }, userId: owner.id });
 createServiceRequest({ db, tenantId: tenant.id, serviceKey: 'sec_authz', assetId: asset.id, params: { profile: 'standard', test_username: 'admin', test_password: 'admin123!A' }, userId: owner.id });

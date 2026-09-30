@@ -45,21 +45,23 @@ function collectParams(ctx) {
     for (const u of pageUrls) {
       try {
         const parsed = new URL(u);
-        for (const [name, value] of parsed.searchParams) params.push({ page: u, action: parsed.origin + parsed.pathname, method: 'GET', name, kind: 'query', sample: value });
+        // keep the FULL url (with its query) as the action: duplicate-parameter probes must retain
+        // the original value alongside the injected duplicate to observe both being processed
+        for (const [name, value] of parsed.searchParams) params.push({ page: u, action: u, method: 'GET', name, kind: 'query', sample: value });
       } catch { /* skip */ }
     }
   }
   return params;
 }
 
-async function send(ctx, url, method, paramName, value, extra = {}) {
+async function send(ctx, url, method, paramName, value, extra = {}, fetchOpts = {}) {
   if (method === 'POST') {
     const body = new URLSearchParams({ [paramName]: value, ...extra }).toString();
-    return ctx.fetch(url, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });
+    return ctx.fetch(url, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body, ...fetchOpts });
   }
   const u = new URL(url);
   u.searchParams.set(paramName, value);
-  return ctx.fetch(u.toString());
+  return ctx.fetch(u.toString(), fetchOpts);
 }
 
 function target0(p) { return p.action || p.page; }
@@ -161,10 +163,14 @@ export const validationEngine = {
             evidence: [ctx.evidenceFrom(res, `Encoded reflection in parameter "${p.name}"`)],
           });
         }
-        if (res.headers['location']?.some((l) => l.includes('mrpd'))) {
-          ctx.report('VAL-017', { severity: 'high', confidence: 'confirmed', endpoint: target, parameter: p.name, target: ctx.asset.identifier, facts: ['Canary value appears in a response header — header injection surface.'], inference: ['If CR/LF can be smuggled, full response splitting is possible.'], evidence: [ctx.evidenceFrom(res, 'Canary reflected into headers')] });
-        }
-      }
+        // header reflection: the canary may appear in the final response's Location header or in any
+        // redirect hop the fetcher followed away from (each hop records the original Location header)
+        const locReflections = (res.headers['location'] || [])
+          .concat((res.redirects || []).map((h) => h.location || '').filter(Boolean));
+        const locHit = locReflections.find((l) => l.includes('mrpd'));
+        if (locHit) {
+          ctx.report('VAL-017', { severity: 'high', confidence: 'confirmed', endpoint: target, parameter: p.name, target: ctx.asset.identifier, facts: [`Canary value appears in a response Location header (${JSON.stringify(locHit.slice(0, 80))}) — header injection surface.`], inference: ['If CR/LF can be smuggled, full response splitting is possible.'], evidence: [ctx.evidenceFrom(res, 'Canary reflected into headers')] });
+        }      }
 
       // ---- Command injection canaries (nonce-marker output differential) ----
       if (ctx.profile !== 'passive') {
@@ -228,7 +234,8 @@ export const validationEngine = {
     for (const rt of redirectTargets) {
       if (!rt.param || seenRedir.has(`${rt.url}|${rt.param}`)) continue;
       seenRedir.add(`${rt.url}|${rt.param}`);
-      const r = await send(ctx, rt.url, rt.method, rt.param, `https://${PROBE_DOMAIN}/`);
+      // noRedirect: the probe must observe the 3xx itself, not the followed destination
+      const r = await send(ctx, rt.url, rt.method, rt.param, `https://${PROBE_DOMAIN}/`, {}, { noRedirect: true });
       if ([301, 302, 303, 307, 308].includes(r.status)) {
         const loc = r.headers['location']?.[0] || '';
         if (loc && new URL(loc, rt.url).host === PROBE_DOMAIN) {
@@ -448,14 +455,14 @@ export const validationEngine = {
 
     // ---- Invalid session state handling (VAL-027) ----
     if (ctx.state.crawl) {
-      const protectedPages = ctx.state.crawl.pages.filter((u) => /account|admin|profile|dashboard|checkout|settings|user/i.test(u)).slice(0, 3);
+      const protectedPages = ctx.state.crawl.pages.filter((p) => /account|admin|profile|dashboard|checkout|settings|user/i.test(p.url || '')).slice(0, 3);
       for (const page of protectedPages) {
         for (const bad of ['sid=null', 'session=undefined', 'sid=00000000000000000000000000000000']) {
-          const r = await ctx.fetch(page, { headers: { cookie: bad } });
+          const r = await ctx.fetch(page.url, { headers: { cookie: bad } });
           if (!r.error && r.status >= 500) {
             ctx.report('VAL-027', {
-              severity: 'medium', confidence: 'confirmed', endpoint: page, target: ctx.asset.identifier,
-              facts: [`Request with malformed session cookie (${bad}) produced HTTP ${r.status} on a protected page.`],
+              severity: 'medium', confidence: 'confirmed', endpoint: page.url, target: ctx.asset.identifier,
+              facts: [`Request with malformed session cookie (${bad}) produced HTTP ${r.status} on ${page.url}.`],
               inference: ['Invalid session state is not handled gracefully — can enable DoS or error-disclosure paths.'],
               evidence: [ctx.evidenceFrom(r, 'Server error on malformed session')],
             });

@@ -1,6 +1,6 @@
 # Test Report — Meridian Platform
 
-Generated **live** by `npm run report:tests` (2026-09-29T18:31:10.886Z); nothing below is hand-maintained.
+Generated **live** by `npm run report:tests` (2026-09-30T03:36:47.245Z); nothing below is hand-maintained.
 
 ## Result
 
@@ -11,7 +11,7 @@ Generated **live** by `npm run report:tests` (2026-09-29T18:31:10.886Z); nothing
 | **Passing** | **185** |
 | Failing | 0 |
 | Cancelled / skipped | 0 / 0 |
-| Wall time | 36.7s |
+| Wall time | 39.2s |
 | Runner | `node --test` (Node built-in, zero test dependencies) |
 
 > ✅ **ALL PASSING**
@@ -21,8 +21,8 @@ Generated **live** by `npm run report:tests` (2026-09-29T18:31:10.886Z); nothing
 | File | Tests | Pass | Fail | Time |
 |---|---|---|---|---|
 | `ai-rag.test.js` | 6 | 6 | 0 | 0.1s |
-| `api-authn.test.js` | 6 | 6 | 0 | 0.5s |
-| `api-server.test.js` | 3 | 3 | 0 | 1.4s |
+| `api-authn.test.js` | 6 | 6 | 0 | 0.4s |
+| `api-server.test.js` | 3 | 3 | 0 | 1.3s |
 | `api-sse.test.js` | 1 | 1 | 0 | 0.8s |
 | `app-audit.test.js` | 6 | 6 | 0 | 0.1s |
 | `app-billing.test.js` | 8 | 8 | 0 | 0.1s |
@@ -36,7 +36,7 @@ Generated **live** by `npm run report:tests` (2026-09-29T18:31:10.886Z); nothing
 | `docint.test.js` | 8 | 8 | 0 | 0.1s |
 | `engines-checks.test.js` | 6 | 6 | 0 | 0.1s |
 | `engines-framework.test.js` | 5 | 5 | 0 | 0.1s |
-| `integration-pipeline.test.js` | 1 | 1 | 0 | 32.0s |
+| `integration-pipeline.test.js` | 1 | 1 | 0 | 34.6s |
 | `lib-crawl.test.js` | 2 | 2 | 0 | 0.1s |
 | `lib-csv.test.js` | 6 | 6 | 0 | 0.1s |
 | `lib-html.test.js` | 8 | 8 | 0 | 0.1s |

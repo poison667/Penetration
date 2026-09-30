@@ -11,6 +11,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,16 +34,26 @@ export function createFixtureApp() {
 <script src="https://cdn.thirdparty.invalid/lib.js"></script>
 </head>
 <body>
-<header><nav><a href="/">Home</a> <a href="/search?q=laptop">Search</a> <a href="/login">Login</a> <a href="/comment">Feedback</a> <a href="/checkout">Checkout</a> <a href="/ping?host=127.0.0.1">Network tool</a></nav></header>
+<header><nav><a href="/">Home</a> <a href="/search?q=laptop">Search</a> <a href="/login">Login</a> <a href="/comment">Feedback</a> <a href="/checkout">Checkout</a> <a href="/ping?host=127.0.0.1">Network tool</a> <a href="/tools">Tools</a> <a href="/account">Account</a></nav></header>
 ${BANNER}
+<script>document.write(location.hash);</script>
 <h1>Fixture Store</h1>
 <h3>Products (deliberately skipped h2)</h3>
 <ul><li><a href="/search?q=laptop">Laptop</a></li><li><a href="/search?q=keyboard">Keyboard</a></li></ul>
 <img src="/logo.png" width="120" height="40">
 <form action="/search" method="get"><input type="text" name="q" placeholder="Search products"><button type="submit">Go</button></form>
-<form action="/comment" method="post"><textarea name="comment" placeholder="Your feedback"></textarea><input type="submit" value="Post"></form>
+<form action="/goto" method="get"><input type="text" name="url" value="https://example.com/"><button type="submit">Go to URL</button></form>
+<form action="/comment" method="post"><textarea name="comment" maxlength="200" placeholder="Your feedback"></textarea><input type="submit" value="Post"></form>
 <form action="/login" method="post"><input name="username" id="u"><input type="password" name="password" id="p" autocomplete="on"><input type="checkbox" name="remember" value="1"> Remember me</form>
 <footer><p>© Fixture</p></footer>
+</body></html>`;
+
+  const toolsPage = () => `<!DOCTYPE html><html lang="en"><head><title>Tools — Fixture</title></head><body>
+<h1>Site Tools</h1>
+<form action="/include" method="get"><input name="url" placeholder="URL to include" value="https://example.com/robots.txt"><button>Include</button></form>
+<form action="/xml" method="post"><textarea name="xml_document" placeholder="Paste XML document"></textarea><button>Parse XML</button></form>
+<form action="/api/profile" method="post"><input name="name" value="Administrator" placeholder="Display name"><button>Save profile</button></form>
+<p><a href="/">Back to store</a></p>
 </body></html>`;
 
   const loginPage = () => `<!DOCTYPE html><html lang="en"><head><title>Login — Fixture</title></head><body>
@@ -68,16 +79,39 @@ ${comments.map((c) => `<div class="comment"><b>${c.author}</b>: ${c.text}</div>`
 <p>Test mode enabled — use sandbox card 4242 4242 4242 4242</p>
 </body></html>`;
 
-  function searchHandler(query) {
-    const q = query.get('q') || '';
+  async function searchHandler(query) {
+    // VULNERABLE (fixture): every duplicate q value is processed and reflected (HTTP parameter pollution)
+    const q = query.getAll('q').join(' ') || '';
+
+    // VULNERABLE (fixture): unbounded recursive-descent "parser" — long input really exhausts the stack
+    if (q.length > 8192) {
+      const dive = (n) => (n === 0 ? 0 : dive(n - 1) + 1);
+      dive(q.length * 8); // throws a real RangeError: Maximum call stack size exceeded
+    }
+
+    // VULNERABLE (fixture): input reaches the "database" query scheduler — SLEEP() delays it (blind SQLi)
+    const sleepM = /SLEEP\s*\(\s*(\d+)\s*\)/i.exec(q);
+    if (sleepM) await new Promise((r) => setTimeout(r, Math.min(Number(sleepM[1]), 5) * 1000));
+
+    // VULNERABLE (fixture): server-side includes are processed — <!--#exec cmd="..."--> really executes
+    let ssiOut = '';
+    const ssiM = /<!--#exec cmd="([^"]{1,120})"-->/.exec(q);
+    if (ssiM) {
+      try { ssiOut = execSync(ssiM[1], { timeout: 2000, encoding: 'utf8', shell: '/bin/sh' }); }
+      catch (e) { ssiOut = String((e && e.stderr) || e?.message || e); }
+    }
+
+    // VULNERABLE (fixture): user input is passed through the template engine — {{arithmetic}} is evaluated
+    const rendered = q.replace(/\{\{\s*([0-9+\-*/(). ]{1,64})\s*\}\}/g, (_, expr) => String(new Function(`"use strict"; return (${expr});`)()));
+
     // vulnerable: value is concatenated into a "SQL query" — a quote breaks it
     if (/['"]/.test(q)) {
       const body = `<html><body><h1>Error</h1><pre>sqlite3.OperationalError: near "${q.slice(0, 40)}": syntax error
-SQL: SELECT * FROM products WHERE name LIKE '%${q}%'</pre></body></html>`;
+SQL: SELECT * FROM products WHERE name LIKE '%${q}%'</pre>${ssiOut ? `<pre>${ssiOut}</pre>` : ''}</body></html>`;
       return { status: 500, body };
     }
     const matches = database.products.filter((p) => p.toLowerCase().includes(q.toLowerCase()));
-    return { status: 200, body: `<html><body><h1>Search: ${q}</h1><ul>${matches.map((m) => `<li>${m}</li>`).join('')}</ul><p>Reflected: ${q}</p></body></html>` };
+    return { status: 200, body: `<html><body><h1>Search: ${rendered}</h1><ul>${matches.map((m) => `<li>${m}</li>`).join('')}</ul><p>Reflected: ${rendered}</p>${ssiOut ? `<pre>SSI output: ${ssiOut}</pre>` : ''}</body></html>` };
   }
 
   async function handler(req, res) {
@@ -132,7 +166,7 @@ window.addEventListener('message', handleMessage);
       case '/admin':
         return send(200, `<html><body><h1>Admin Dashboard</h1><p>Users list: admin, alice, bob</p><a href="/">Manage</a></body></html>`);
       case '/search': {
-        const r = searchHandler(u.searchParams);
+        const r = await searchHandler(u.searchParams);
         return send(r.status, r.body);
       }
       case '/login':
@@ -182,6 +216,50 @@ window.addEventListener('message', handleMessage);
         if (url) return send(302, '', { location: url }); // open redirect
         return send(400, 'missing url');
       }
+      case '/goto': {
+        // VULNERABLE (fixture): open redirect through a GET form parameter; the Location header is built from raw input
+        const url = u.searchParams.get('url');
+        if (url) return send(302, '', { location: url });
+        return send(400, 'missing url');
+      }
+      case '/include': {
+        // VULNERABLE (fixture): remote file inclusion — the server really fetches the URL and surfaces fetch errors
+        const url = u.searchParams.get('url') || u.searchParams.get('page');
+        if (!url) return send(400, 'missing url');
+        try {
+          const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+          const text = await r.text();
+          return send(200, `<html><body><h1>Included resource</h1><pre>${text.slice(0, 500)}</pre></body></html>`);
+        } catch (e) {
+          // surface the underlying cause (e.g. getaddrinfo ENOTFOUND) like verbose file-loading errors do
+          const detail = [e?.message, e?.cause?.message].filter(Boolean).join(': ');
+          return send(200, `<html><body><h1>Include failed</h1><pre>${detail}</pre></body></html>`);
+        }
+      }
+      case '/account': {
+        // VULNERABLE (fixture): malformed session state is not handled — an unknown/garbage sid really throws (HTTP 500)
+        const sid = (req.headers.cookie || '').match(/sid=([^;]*)/)?.[1];
+        if (sid != null) {
+          const sess = sessions.get(sid.trim());
+          if (!sess) throw new Error(`Invalid session state: ${JSON.stringify(sid)}`);
+          return send(200, `<html><body><h1>Account: ${sess.user}</h1><p>Role: ${sess.role}</p><a href="/logout">Logout</a></body></html>`);
+        }
+        return send(200, `<html><body><h1>Account</h1><p>Sign in to manage your account.</p><form action="/login" method="post"><input name="username" id="acct-user"><input type="password" name="password"><button>Sign in</button></form></body></html>`);
+      }
+      case '/api/profile': {
+        // VULNERABLE (fixture): mass assignment — every submitted field is persisted with no allowlist
+        collectBody(req, (body) => {
+          let data = {};
+          try { data = JSON.parse(body.toString() || '{}'); } catch { return send(400, 'invalid json'); }
+          const current = profiles[1] || { user: 'admin' };
+          Object.assign(current, data);
+          profiles[1] = current;
+          return send(200, JSON.stringify({ ok: true, profile: current }), { 'content-type': 'application/json' });
+        });
+        return;
+      }
+      case '/tools':
+        return send(200, toolsPage());
       case '/file': {
         const name = u.searchParams.get('name') || '';
         if (name.includes('../')) {
@@ -201,16 +279,18 @@ window.addEventListener('message', handleMessage);
       case '/xml':
         collectBody(req, (body) => {
           const xml = body.toString();
-          // vulnerable parser: expands internal + SYSTEM entities
-          let out = xml;
-          const entRe = /<!ENTITY (\w+) SYSTEM "([^"]+)">/g;
-          let m; const expanded = {};
+          // VULNERABLE (fixture): parser resolves SYSTEM entities (XXE) and returns the resolved document text
+          const entRe = /<!ENTITY\s+(\w+)\s+SYSTEM\s+"([^"]+)"/g;
+          const entities = {};
+          let m;
           while ((m = entRe.exec(xml)) !== null) {
-            try { expanded[m[1]] = fs.readFileSync(m[2].replace('file://', ''), 'utf8').slice(0, 200); } catch { expanded[m[1]] = 'unreadable'; }
+            try { entities[m[1]] = fs.readFileSync(m[2].replace(/^file:\/\//, ''), 'utf8').slice(0, 200); }
+            catch { entities[m[1]] = '(unreadable)'; }
           }
-          out = xml.replace(/&(\w+);/g, (_, name) => expanded[name] ?? `&${name};`);
-          if (out.includes('SYSTEM')) return send(200, `<html><body>Parsed: ${out.replace(/<[^>]+>/g, '').slice(0, 400)}</body></html>`);
-          return send(200, `<html><body>Parsed OK</body></html>`);
+          // resolve entity references in document text, then strip ALL markup (incl. the DTD) like a real parser
+          const text = xml.replace(/&(\w+);/g, (full, name) => (name in entities ? entities[name] : full));
+          const stripped = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          return send(200, `<html><body><h1>Parsed document</h1><p>${stripped.slice(0, 300)}</p></body></html>`);
         });
         return;
       case '/upload':
@@ -254,7 +334,17 @@ export function startFixture({ httpPort = 8081, tlsPort = null } = {}) {
   const handler = createFixtureApp();
   const servers = [];
   return new Promise((resolve) => {
-    const httpServer = http.createServer(handler);
+    // like a real framework, unhandled exceptions surface as HTTP 500 with a stack trace (error disclosure)
+    const wrapped = async (req, res) => {
+      try { await handler(req, res); }
+      catch (e) {
+        if (!res.headersSent) {
+          res.writeHead(500, { 'content-type': 'text/html; charset=utf-8' });
+          res.end(`<html><body><h1>Internal Server Error</h1><pre>${e?.stack || e}</pre></body></html>`);
+        } else { try { res.end(); } catch { /* already sent */ } }
+      }
+    };
+    const httpServer = http.createServer({ maxHeaderSize: 65536 }, wrapped);
     httpServer.listen(httpPort, '127.0.0.1', () => {
       servers.push(httpServer);
       if (tlsPort) {
@@ -262,7 +352,7 @@ export function startFixture({ httpPort = 8081, tlsPort = null } = {}) {
         const certPath = path.join(__dirname, 'certs', 'cert.pem');
         if (fs.existsSync(keyPath)) {
           const httpsMod = import('node:https').then(({ default: https }) => {
-            const tlsServer = https.createServer({ key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) }, handler);
+            const tlsServer = https.createServer({ maxHeaderSize: 65536, key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) }, wrapped);
             tlsServer.listen(tlsPort, '127.0.0.1', () => { servers.push(tlsServer); resolve(servers); });
           });
           return;
