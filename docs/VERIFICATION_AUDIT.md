@@ -345,6 +345,18 @@ Windows .exe (NSIS) / .msi (WiX) remain CI-built per the committed workflow
 (no Windows runner or wine locally — D4 addendum, L-2). GUI install/run
 testing on a real Linux desktop remains an open item, recorded in L-2.
 
+**Rebuild record (same session).** The first verified build's AppImage file
+(SHA-256 `1b91cc08c600b453…`) was dropped by the build sandbox's
+workspace-snapshot size cap after verification; everything was rebuilt from
+the same sources and the same surviving deb set + recipe (one re-download:
+the `libwebkit2gtk-4.1-0` runtime deb, also dropped by the cap). The rebuild
+reproduced the identical verification profile — 196 bundled libs, 143
+in-image dependency resolutions, only the deliberate linuxdeploy alsa
+exclusion external, SPA assets embedded, DEB/RPM metadata unchanged — with
+new hashes recorded in `installers/SHA256SUMS.txt` (byte differences are
+packaging timestamps, not content). Both build logs are in the workspace
+history; artifacts republished with the GitHub v1.0.0 release.
+
 **Windows cross-compile attempt (made, and honestly resource-blocked).** A
 serious local attempt to also produce the NSIS .exe was made with
 `cargo-xwin` 0.23.1 (rustc target `x86_64-pc-windows-msvc`, xwin-downloaded
