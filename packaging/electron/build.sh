@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="1.0.1"
+VERSION="1.1.0"
 ELECTRON_VERSION="44.5.1"
 CACHE=".cache"
 OUT="build/Meridian-Platform-win32-x64"

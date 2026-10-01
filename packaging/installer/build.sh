@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="1.0.1"
+VERSION="1.1.0"
 NODE_VERSION="v24.21.0"   # must match the SEA blob generator
 SENTINEL="NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2"
 CACHE=".cache"
