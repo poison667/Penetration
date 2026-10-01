@@ -6,8 +6,8 @@ import { createSession, rotateSession, authenticate, authenticateApiKey, require
 import { recordAudit } from '#app/audit';
 import { serviceByKey, SERVICE_CATALOG, PLANS } from '#app/catalog';
 import { balanceOf, grantCredits } from '#app/billing';
-import { createServiceRequest } from '#worker/runner';
-import { generateReport } from '#report/engine';
+import { createServiceRequest, createRetestRequest } from '#worker/runner';
+import { generateReport, generateRetestReport } from '#report/engine';
 import { nowIso, sha256 } from '#core/util';
 import { createRateLimiter } from './ratelimit.js';
 
@@ -283,6 +283,34 @@ export function registerCoreRoutes(router, app) {
     db.store.put('jobs', { ...job, state: 'QUEUED', attempts: 0, error: null, finished_at: null });
     ctx.respond(200, { ok: true, state: 'QUEUED' });
   });
+  router.post('/api/v1/jobs/:id/retest', async (ctx) => {
+    requireAuth(['jobs:write'])(ctx);
+    const source = db.byId('jobs', ctx.tid, ctx.params.id);
+    if (!source) throw notFound('job not found');
+    const { job } = createRetestRequest({ db, tenantId: ctx.tid, sourceJob: source, userId: ctx.auth.user.id });
+    ctx.respond(201, { job: jobSummary(job) });
+  });
+
+  // ---------------- RETESTS (fix verification) ----------------
+  router.get('/api/v1/retests', async (ctx) => {
+    requireAuth(['jobs:read'])(ctx);
+    const asset = ctx.query.get('asset_id');
+    const { rows, total } = db.list('retest_runs', ctx.tid, {
+      where: (r) => !asset || r.asset_id === asset,
+      limit: Math.min(200, Number(ctx.query.get('limit') || 50)),
+    });
+    ctx.respond(200, { retests: rows.map((r) => ({
+      id: r.id, source_job_id: r.source_job_id, retest_job_id: r.retest_job_id, asset_id: r.asset_id, service_key: r.service_key,
+      source_findings: r.source.findings_count, retest_findings: r.retest.findings_count,
+      verdicts: r.verdicts, severity_changes: r.severity_changes, created_at: r.created_at,
+    })), total });
+  });
+  router.get('/api/v1/retests/:id', async (ctx) => {
+    requireAuth(['jobs:read'])(ctx);
+    const r = db.byId('retest_runs', ctx.tid, ctx.params.id);
+    if (!r) throw notFound('retest not found');
+    ctx.respond(200, { retest: r });
+  });
 
   // ---------------- FINDINGS + EVIDENCE ----------------
   router.get('/api/v1/findings', async (ctx) => {
@@ -338,10 +366,18 @@ export function registerCoreRoutes(router, app) {
   router.post('/api/v1/reports', async (ctx) => {
     requireAuth(['reports:write'])(ctx);
     const body = validate({
-      kind: V.enum(['service_report', 'asset_summary', 'executive_summary']),
+      kind: V.enum(['service_report', 'asset_summary', 'executive_summary', 'retest_report']),
       format: V.enum(['pdf', 'html', 'csv', 'xlsx', 'json']),
-      job_id: V.string({ max: 60 }), asset_id: V.string({ max: 60 }),
+      job_id: V.string({ max: 60 }), asset_id: V.string({ max: 60 }), retest_id: V.string({ max: 60 }),
     }, ctx.body, { partial: true });
+    if (body.retest_id || body.kind === 'retest_report') {
+      const run = body.retest_id ? db.byId('retest_runs', ctx.tid, body.retest_id) : null;
+      if (!run) throw notFound('retest not found');
+      const { report, model } = generateRetestReport(db, files, { tenantId: ctx.tid, run, format: body.format || 'pdf', createdBy: ctx.auth.user.id });
+      recordAudit(db.store, { tenantId: ctx.tid, actorType: 'user', actorId: ctx.auth.user.id, action: 'report.generated', resource: 'report', resourceId: report.id, detail: { kind: report.kind, format: report.format, retest_run_id: run.id } });
+      ctx.respond(201, { report: { id: report.id, kind: report.kind, format: report.format, sha256: report.sha256, findings_count: report.findings_count, retest_run_id: run.id, verdicts: model.verdicts } });
+      return;
+    }
     const job = body.job_id ? db.byId('jobs', ctx.tid, body.job_id) : null;
     if (body.job_id && !job) throw notFound('job not found');
     const { report, model } = generateReport(db, files, { tenantId: ctx.tid, job, kind: body.kind || 'service_report', format: body.format || 'pdf', assetId: body.asset_id || job?.asset_id || null, createdBy: ctx.auth.user.id });

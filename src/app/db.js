@@ -19,6 +19,8 @@ export class Db {
     s.addIndex('jobs', 'tid_state', (j) => `${j.tenant_id}|${j.state}`);
     s.addIndex('findings', 'tid_job', (f) => `${f.tenant_id}|${f.job_id}`);
     s.addIndex('findings', 'tid_asset', (f) => `${f.tenant_id}|${f.asset_id}`);
+    s.addIndex('findings', 'tid_hash', (f) => `${f.tenant_id}|${f.asset_id || '*'}|${f.hash}`);
+    s.addIndex('retest_runs', 'tid_asset', (r) => `${r.tenant_id}|${r.asset_id || '*'}`);
     s.addIndex('notifications', 'tid_user', (n) => `${n.tenant_id}|${n.user_id || '*'}`);
     s.addIndex('monitor_checks', 'monitor_ts', (c) => `${c.monitor_id}|${c.ts}`);
     s.addIndex('evidence', 'tid_job', (e) => `${e.tenant_id}|${e.job_id}`);
@@ -74,5 +76,5 @@ export const PREFIX = {
   workflows: 'wf', workflow_runs: 'wfr', schedules: 'sch', rules: 'rule', rule_runs: 'arun',
   webhook_endpoints: 'whk', credit_ledger: 'led', subscriptions: 'sub', invoices: 'inv',
   tickets: 'tix', ticket_messages: 'tmsg', notifications: 'ntf', tasks: 'task',
-  workflow_versions: 'wfver',
+  workflow_versions: 'wfver', retest_runs: 'rt',
 };

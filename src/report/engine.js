@@ -260,3 +260,111 @@ export function generateReport(db, files, { tenantId, job = null, kind, format =
   });
   return { report, content, model };
 }
+
+/* ===================== RETEST (FIX-VERIFICATION) REPORT ===================== */
+
+const RETEST_METHODOLOGY = [
+  'A retest re-executes the same service, engine set and testing profile as the source assessment against the same authorized target, capturing fresh evidence for every re-detected finding.',
+  'Findings are matched across runs by a stable fingerprint (check + target + endpoint + parameter); a re-detected finding keeps its original finding identifier (FID).',
+  'Verdicts: REPRODUCED = re-detected with fresh evidence. FIXED = every contributing engine re-ran successfully and did not re-detect the issue. INCONCLUSIVE = a contributing engine failed during the retest, so no verdict is claimed. NEW = first observed in this retest run.',
+];
+
+const RETEST_LIMITATIONS = [
+  '"Fixed" means "not re-detected by the same checks under the same profile at retest time" — it is strong evidence of remediation, not a proof of absence of the vulnerability class.',
+  'Content or behaviour that changed between the source run and the retest (A/B deployments, caches, wafers, randomized responses) can influence verdicts.',
+  'Findings outside the retested engine set or outside the authorized scope are not covered by this report.',
+];
+
+export function generateRetestReport(db, files, { tenantId, run, format = 'pdf', createdBy = null }) {
+  const asset = run.asset_id ? db.byIdGlobal('assets', run.asset_id) : null;
+  const model = {
+    kind: 'retest_report',
+    generated_at: new Date().toISOString(),
+    tenant_id: tenantId,
+    asset: asset ? { id: asset.id, identifier: asset.identifier, kind: asset.kind } : null,
+    source_job_id: run.source_job_id,
+    retest_job_id: run.retest_job_id,
+    service_key: run.service_key,
+    source: run.source,
+    retest: run.retest,
+    verdicts: run.verdicts,
+    severity_changes: run.severity_changes || [],
+    items: run.items,
+    methodology: RETEST_METHODOLOGY,
+    limitations: RETEST_LIMITATIONS,
+  };
+  const render = (integrityHash) => {
+    if (format === 'json') return Buffer.from(JSON.stringify(model, null, 2), 'utf8');
+    if (format === 'csv') {
+      const head = 'fid,check_id,title,severity,retest_severity,verdict,endpoint';
+      const rows = model.items.map((i) => [i.fid, i.check_id, i.title, i.severity, i.retest_severity || '', i.verdict, (i.endpoint || '').replace(/[",\n]/g, ' ')]);
+      return Buffer.from([head, ...rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))].map((r) => r.replace(/^"|"$/g, '')).join('\n'), 'utf8');
+    }
+    if (format === 'html') {
+      const verdictColor = { reproduced: '#d13438', fixed: '#107c10', inconclusive: '#b28900', new: '#0078d4' };
+      const rowsHtml = model.items.map((i) => `<tr><td>${escapeHtml(i.fid)}</td><td>${escapeHtml(i.check_id)}</td><td>${escapeHtml(truncate(i.title, 70))}</td><td>${escapeHtml(i.severity)}</td><td style="color:${verdictColor[i.verdict]};font-weight:700">${i.verdict.toUpperCase()}</td><td>${escapeHtml(truncate(i.endpoint || '—', 50))}</td></tr>`).join('');
+      return Buffer.from(`<!doctype html><html><head><meta charset="utf-8"><title>Meridian Retest Report</title><style>body{font-family:'Segoe UI',system-ui,sans-serif;margin:32px;color:#1a1a1a}h1{font-size:22px}h2{font-size:16px;margin-top:28px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}th{background:#f4f6f8}.kv{color:#444}.stats{display:flex;gap:24px;margin:16px 0}.stat b{font-size:20px;display:block}</style></head><body>
+<h1>Meridian Platform — Retest / Fix-Verification Report</h1>
+<p class="kv">Generated ${escapeHtml(formatDate(model.generated_at))}${asset ? ` — Target: ${escapeHtml(asset.identifier)}` : ''}</p>
+<div class="stats">
+  <div class="stat" style="color:#d13438"><b>${model.verdicts.reproduced}</b>reproduced</div>
+  <div class="stat" style="color:#107c10"><b>${model.verdicts.fixed}</b>fixed</div>
+  <div class="stat" style="color:#b28900"><b>${model.verdicts.inconclusive}</b>inconclusive</div>
+  <div class="stat" style="color:#0078d4"><b>${model.verdicts.new}</b>new</div>
+</div>
+<p class="kv">Source assessment: ${escapeHtml(model.source.job_id)} — ${model.source.findings_count} findings (finished ${escapeHtml(String(model.source.finished_at || '—')).slice(0, 19)}Z)<br>
+Retest run: ${escapeHtml(model.retest.job_id)} — ${model.retest.findings_count} findings (finished ${escapeHtml(String(model.retest.finished_at || '—')).slice(0, 19)}Z)</p>
+${model.severity_changes.length ? `<h2>Severity changes</h2><ul>${model.severity_changes.map((c) => `<li>${escapeHtml(c.fid)} (${escapeHtml(c.check_id)}): ${escapeHtml(c.from)} → <b>${escapeHtml(c.to)}</b></li>`).join('')}</ul>` : ''}
+<h2>Verdicts (${model.items.length})</h2>
+<table><tr><th>FID</th><th>Check</th><th>Title</th><th>Severity</th><th>Verdict</th><th>Endpoint</th></tr>${rowsHtml}</table>
+<h2>Methodology</h2><ul>${model.methodology.map((m) => `<li>${escapeHtml(m)}</li>`).join('')}</ul>
+<h2>Limitations</h2><ul>${model.limitations.map((m) => `<li>${escapeHtml(m)}</li>`).join('')}</ul>
+${integrityHash ? `<p class="kv"><b>Integrity SHA-256</b><br>${escapeHtml(integrityHash)}</p>` : ''}
+</body></html>`, 'utf8');
+    }
+    // pdf (default)
+    const pdf = new PdfBuilder({ title: 'Meridian Retest Report', footer: `Meridian Platform · retest_report · generated ${model.generated_at.slice(0, 19)}Z` });
+    pdf.heading('Retest / Fix-Verification Report', { size: 20 });
+    pdf.paragraph(`Generated ${formatDate(model.generated_at)}${asset ? ` — Target: ${asset.identifier}` : ''}`, { gray: 0.35 });
+    pdf.subheading('Verdict Summary');
+    pdf.keyValue([
+      ['Reproduced (still present)', String(model.verdicts.reproduced)],
+      ['Fixed (not re-detected)', String(model.verdicts.fixed)],
+      ['Inconclusive (engine failed)', String(model.verdicts.inconclusive)],
+      ['New findings', String(model.verdicts.new)],
+      ['Source assessment', `${model.source.job_id} — ${model.source.findings_count} findings`],
+      ['Retest run', `${model.retest.job_id} — ${model.retest.findings_count} findings`],
+    ]);
+    if (model.severity_changes.length) {
+      pdf.subheading('Severity Changes');
+      for (const c of model.severity_changes) pdf.paragraph(`• ${c.fid} (${c.check_id}): ${c.from} → ${c.to}`, { size: 9 });
+    }
+    pdf.subheading('Per-Finding Verdicts');
+    pdf.table(['FID', 'Verdict', 'Severity', 'Check', 'Title'], model.items.map((i) => [i.fid, i.verdict.toUpperCase(), (i.severity || '—').toUpperCase(), i.check_id, truncate(i.title, 55)]), { widths: [70, 72, 52, 62, 200] });
+    pdf.subheading('Methodology');
+    for (const m of model.methodology) pdf.paragraph(`• ${m}`, { size: 9 });
+    pdf.subheading('Limitations');
+    for (const l of model.limitations) pdf.paragraph(`• ${l}`, { size: 9 });
+    if (integrityHash) {
+      pdf.subheading('Integrity');
+      pdf.paragraph(`SHA-256: ${integrityHash}`, { size: 8 });
+    }
+    return pdf.build();
+  };
+  const integrityHash = sha256(render(null));
+  const content = render(integrityHash);
+  const ext = format === 'xlsx' ? 'xlsx' : format;
+  const rec = files.put(tenantId, content, {
+    name: `report-retest-${Date.now()}.${ext}`,
+    mime: format === 'pdf' ? 'application/pdf' : format === 'html' ? 'text/html' : format === 'csv' ? 'text/csv' : 'application/json',
+    meta: { kind: 'report' },
+  });
+  const report = db.insert('reports', {
+    tenant_id: tenantId, job_id: run.retest_job_id, asset_id: run.asset_id || null,
+    kind: 'retest_report', format, title: `Retest Report — ${model.verdicts.fixed} fixed / ${model.verdicts.reproduced} reproduced / ${model.verdicts.new} new`,
+    file_id: rec.id, sha256: integrityHash, size_bytes: content.length,
+    findings_count: model.items.length, previous_report_id: null, created_by: createdBy,
+    retest_run_id: run.id,
+  });
+  return { report, content, model };
+}

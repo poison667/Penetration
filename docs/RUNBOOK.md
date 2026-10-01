@@ -219,9 +219,74 @@ Settings → API keys.
 
 ---
 
-## 7. Desktop applications — status and install
+## 7. Desktop applications
 
-Installers: https://github.com/poison667/Penetration/releases/tag/v1.0.0
+Three desktop forms exist, all built from the same shared codebase:
+
+### 7a. Windowed application (Electron) — **recommended**
+
+`Meridian-Desktop-1.0.0-win64.zip` (Windows 10+ x64 incl. LTSC; Linux twin
+buildable) — a portable app that opens the platform **in its own window**:
+extract the zip, double-click `Meridian.exe`. No browser, no console, no
+installer, no WebView2, no Node.js required (Chromium is bundled — nothing
+can fail on "this Windows version"). First run shows live seeding progress
+inside the window (12 real jobs, a few minutes), then the login screen; later
+runs start in seconds. App home: `%LOCALAPPDATA%\Meridian` (`data/` = all
+state — back it up to back up the platform, delete it to reset; `logs/` =
+dated log files). One instance at a time; free loopback ports are chosen
+automatically. Unsigned → SmartScreen: *More info → Run anyway*. OCR not
+bundled (honest "engine unavailable"). Build/rebuild either target on any
+machine: `packaging/electron/build.sh` — full verification record in
+`packaging/electron/README.md`.
+
+### 7b. Single executable, console mode (Node SEA)
+
+`Meridian-Platform-1.0.0-x64.exe` — one ~90 MB file that runs the whole
+platform with a console window and opens the UI in the default browser
+(preferable for headless/server use). Same first-run seeding, same app home.
+(Build recipe: Node v24 SEA — `launcher.cjs` injected into `node.exe` with
+postject; sources lost with an unrecovered snapshot, superseded by 7d.)
+
+### 7d. One-file Windows setup — `Meridian-Setup-1.0.0.exe` (recommended)
+
+A single ~229 MB exe that installs the 7a windowed application like normal
+Windows software: double-click → installs to `%LOCALAPPDATA%\Meridian\Program`
+(no admin) → Desktop + Start Menu shortcuts ("Meridian Platform") →
+Apps & Features entry with uninstaller → launches the windowed app.
+Workspace data at `%LOCALAPPDATA%\Meridian\data` is never touched
+(re-installs/upgrades preserve it; uninstall keeps it).
+
+Architecture (same overlay technique commercial installers use):
+
+```
+[node.exe + tiny SEA blob (installer.cjs)] [app.tar.gz] [64-byte footer]
+```
+
+- `packaging/installer/installer.cjs` — setup logic: reads the archive from
+  its own file tail (magic `MERIDIAN-OVL1`), pure-Node ustar+gzip extractor,
+  live-instance refusal via `instance.lock`, `.installed-version` marker,
+  `uninstall.cmd` generation, PowerShell shortcuts + `reg.exe` HKCU uninstall
+  key (best-effort, non-fatal), detached launch, `--uninstall` mode.
+- `packaging/installer/build.sh` — build: tars the assembled 7a app tree,
+  generates the tiny SEA blob (Node v24.21.0), postjects it into win/linux
+  node binaries (Authenticode cert table zeroed first on win), appends the
+  overlay. Produces `Meridian-Setup-1.0.0.exe` + a Linux twin for verification.
+- `packaging/installer/sea-config.json` — SEA config (no assets; the app is
+  the overlay).
+
+Verified in-sandbox on the Linux twin (same code path, real executable):
+extraction is byte-identical to the source tree (SHA-256 of `Meridian.exe`
+matches; 22 files + 2 generated), install/re-install/`--uninstall` behave as
+specified, live-lock refusal works, data survives uninstall. Windows exe
+structurally verified (valid PE32+ AMD64, SEA resource present, fuse flipped,
+overlay footer sane). Windows-only integration steps (shortcuts, registry,
+detached launch, and the GUI window itself) cannot execute in this sandbox —
+they are PowerShell/`reg.exe` one-liners run best-effort with warnings, and
+each failure is reported without aborting the install.
+
+### 7c. Tauri shell installers (on the release — documented open item)
+
+https://github.com/poison667/Penetration/releases/tag/v1.0.0
 (SHA-256 digests in the release notes and `installers/SHA256SUMS.txt`).
 
 | OS | File | Install |
@@ -232,22 +297,14 @@ Installers: https://github.com/poison667/Penetration/releases/tag/v1.0.0
 | Windows 10/11 | `meridian-platform_1.0.0_x64-setup.exe` | double-click (NSIS installer) |
 | Windows 10/11 | `meridian-platform_1.0.0_x64_en-US.msi` | `msiexec /i …msi` (enterprise deployment) |
 
-The Linux packages expect `libwebkit2gtk-4.1-0` + `libgtk-3-0` from the distro
-(pulled automatically by apt/dnf); the AppImage is self-contained (196 bundled
-libraries; ALSA expected from the base system).
-
-**Known limitation — read before relying on the desktop app (docs/LIMITATIONS.md L-2):**
-the Tauri shell embeds the identical SPA (verified: same asset hashes as the
-served web client), but the SPA issues **same-origin** API requests, and inside
-the desktop webview those do not reach a Meridian server. The installed desktop
-app therefore launches and renders the UI, but **login/API calls from it will
-fail until the server-URL wiring is completed in the client** (the shell's CSP
-already permits `http://127.0.0.1:8080` and `https://*`, so the remaining work
-is a small client-side change). The **fully verified** way to operate the
-platform today is the **browser UI at http://localhost:8080** (27/27
-real-browser checks, 15/15 live checks). GUI launch-testing on real desktops
-was impossible in the headless build sandbox and remains the documented open
-item — nothing is overclaimed.
+**Known limitation (docs/LIMITATIONS.md L-2):** these shells embed the
+identical SPA but the SPA issues same-origin API requests, which do not reach
+the server from inside the desktop webview — login/API calls from the
+installed shell fail until the client-side server-URL wiring is completed
+(the CSP already allows it; it is a small client change awaiting rebuild).
+They also require the WebView2 runtime, which Windows 10 LTSC does not ship
+by default. The verified operating paths are the **browser UI** and the
+**single executable (7a)**.
 
 ---
 
@@ -332,3 +389,31 @@ separately; back up `data/` (it is the entire state).
 - `DEVELOPMENT.md` — conventions, adding a security check
 - `fixtures/vuln-app/README.md` — the test oracle and its intentional flaws
 - `docs/screenshots/` — real-browser captures of the workspace
+
+## 12. Retest & fix verification (v1.0.1)
+
+Any completed security/audit job with an asset can be retested: the platform
+re-runs the SAME service, engine set and profile against the SAME target, then
+verifies every source finding:
+
+- **reproduced** — re-detected with fresh evidence (the finding keeps its FID)
+- **fixed** — every contributing engine re-ran successfully and did not re-detect it
+- **inconclusive** — a contributing engine failed during the retest (no claim made)
+- **new** — first observed in this retest run
+
+How to use: open a completed job → **Retest — verify fixes**. The retest job
+shows a verdict panel + a downloadable **Retest Report** (PDF/HTML/CSV/JSON,
+integrity-hashed). API: `POST /api/v1/jobs/:id/retest`, `GET /api/v1/retests`,
+`GET /api/v1/retests/:id`, `POST /api/v1/reports {kind:"retest_report", retest_id}`.
+
+Honest semantics (also printed in every retest report): "fixed" means "not
+re-detected by the same checks under the same profile at retest time" — strong
+evidence of remediation, not proof of absence. Verdicts never downgrade to
+"fixed" when an engine failed (they stay "inconclusive").
+
+Verified end-to-end against the deliberately vulnerable fixture with its
+**patched mode** (`FIXTURE_PATCHED=headers,exposure,verbose_errors,…` — see
+`fixtures/vuln-app/README.md`): real behaviour change between runs produces
+real verdicts (e.g. 66 findings → 62 reproduced / 4 fixed after remediating
+security headers). Tests: `tests/engines-retest.test.js` (unit verdict matrix
++ full e2e).

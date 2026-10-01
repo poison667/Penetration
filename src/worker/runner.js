@@ -7,6 +7,7 @@ import { notify } from '#app/notify';
 import { recordAudit } from '#app/audit';
 import { buildContext, runEngine, analyzeFindings, qualityCheck, assignFids } from '#engines';
 import { ENGINES, engineKeysForService } from '../engines/registry.js';
+import { isRetestJob, linkRetestFindings, applyRetestVerdicts } from '../engines/retest.js';
 
 /**
  * Job lifecycle (specification Part 9):
@@ -38,6 +39,30 @@ export function createServiceRequest({ db, tenantId, serviceKey, assetId, params
   });
   recordAudit(db.store, { tenantId, actorType: userId ? 'user' : 'system', actorId: userId, action: 'service.requested', resource: 'service_request', resourceId: request.id, detail: { service: serviceKey, asset_id: assetId, source } });
   return { request, job };
+}
+
+/**
+ * Retest request: re-runs the SAME service against the SAME asset as a
+ * completed source job (same profile), then the runner applies fix-verification
+ * verdicts (reproduced / fixed / inconclusive / new) against the source findings.
+ */
+export function createRetestRequest({ db, tenantId, sourceJob, userId = null }) {
+  if (!sourceJob || sourceJob.tenant_id !== tenantId) throw notFound('job not found');
+  if (!['COMPLETED', 'PARTIALLY_COMPLETED'].includes(sourceJob.state)) {
+    throw badRequest('retest requires a completed source job (current state: ' + sourceJob.state + ')');
+  }
+  if (!sourceJob.asset_id) throw badRequest('retest requires a job with an asset target');
+  const service = serviceByKey(sourceJob.service_key);
+  if (!['security', 'audit'].includes(service.category)) {
+    throw badRequest('retest supports security and audit services (got: ' + service.category + ')');
+  }
+  const { request, job } = createServiceRequest({
+    db, tenantId, serviceKey: sourceJob.service_key, assetId: sourceJob.asset_id,
+    params: { ...sourceJob.params, source_job_id: sourceJob.id }, userId, source: 'retest',
+  });
+  const marked = db.update('jobs', tenantId, job.id, { meta: { retest_of: sourceJob.id } });
+  recordAudit(db.store, { tenantId, actorType: userId ? 'user' : 'system', actorId: userId, action: 'job.retest_requested', resource: 'job', resourceId: sourceJob.id, detail: { retest_job_id: job.id, service: sourceJob.service_key } });
+  return { request, job: marked };
 }
 
 /** VALIDATING stage: params, asset authorization, scope, credits hold. Idempotent per job. */
@@ -175,6 +200,10 @@ export async function executeJob(db, files, job, { workerId = 'worker-1' } = {})
       patch({ state: 'QUALITY_CHECK', progress: 85 });
       const qc = qualityCheck(ctx);
       assignFids(db, job.tenant_id, findings);
+      if (isRetestJob(job)) {
+        linkRetestFindings(db, job, findings);
+        log('info', `retest of job ${job.meta.retest_of}: ${findings.filter((f) => f.verification === 'reproduced').length} re-detected, ${findings.filter((f) => f.verification === 'not_retested').length} new`);
+      }
       for (const ev of ctx.evidence) db.store.put('evidence', ev);
       for (const f of findings) {
         for (const evId of f.evidence_ids) {
@@ -201,6 +230,18 @@ export async function executeJob(db, files, job, { workerId = 'worker-1' } = {})
       const { committed } = commitCredits(db, job.tenant_id, job.id, cost, usage.cost);
       patch({ state: finalState, progress: 100, finished_at: nowIso(), usage: { ...usage, credits_committed: committed, credits_estimate: cost } });
       log('info', `job ${finalState.toLowerCase()}: ${findings.length} findings, ${ctx.evidence.length} evidence records, ${committed} credits committed`);
+      let retestRun = null;
+      if (isRetestJob(job)) {
+        retestRun = applyRetestVerdicts(db, job);
+        log('info', `retest verdicts: ${retestRun.verdicts.reproduced} reproduced, ${retestRun.verdicts.fixed} fixed, ${retestRun.verdicts.inconclusive} inconclusive, ${retestRun.verdicts.new} new`);
+        summary.retest = {
+          source_job_id: retestRun.source_job_id,
+          retest_run_id: retestRun.id,
+          verdicts: retestRun.verdicts,
+          severity_changes: retestRun.severity_changes,
+        };
+        patch({ result_summary: summary });
+      }
       if (finalState !== 'FAILED') {
         bus.publish(TOPICS.jobCompleted, { id: job.id, tenant_id: job.tenant_id, service_key: job.service_key, asset_id: job.asset_id, findings_count: findings.length, state: finalState, job: { id: job.id } });
         notify(db, { tenantId: job.tenant_id, type: 'job_completed', title: `${service.name} ${finalState === 'COMPLETED' ? 'completed' : 'completed with warnings'}`, body: `${findings.length} findings · ${ctx.requests} requests · ${ctx.evidence.length} evidence records`, data: { job_id: job.id } });

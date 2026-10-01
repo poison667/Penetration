@@ -141,6 +141,54 @@ export function JobsView() {
   );
 }
 
+function RetestPanel({ runId }: { runId: string }) {
+  const { navigate, toast } = useApp();
+  const r = useAsync(() => api<{ retest: any }>(`/api/v1/retests/${runId}`), [runId]);
+  const rt: any = (r.data as any)?.retest;
+  const genReport = async () => {
+    try {
+      const res = await api<{ report: any }>('/api/v1/reports', { method: 'POST', body: { kind: 'retest_report', retest_id: runId, format: 'pdf' } });
+      window.open(`/api/v1/reports/${res.report.id}/download`, '_blank');
+    } catch (e: any) { toast(e.message, 'err'); }
+  };
+  if (r.loading) return <Panel title="Retest verdicts"><div className="loading">Loading verdicts…</div></Panel>;
+  if (r.error) return <Err error={r.error} />;
+  if (!rt) return null;
+  const tone = (v: string) => (v === 'fixed' ? 'ok' : v === 'reproduced' ? 'err' : v === 'new' ? 'accent' : 'warn') as 'ok' | 'err' | 'accent' | 'warn';
+  return (
+    <Panel title={`Retest verdicts — vs source run ${(rt.source_job_id || '').slice(0, 12)}…`} pad={false}>
+      <div style={{ display: 'flex', gap: 18, padding: '14px 16px', flexWrap: 'wrap', alignItems: 'center' }}>
+        {[['reproduced', 'still present'], ['fixed', 'fixed'], ['inconclusive', 'inconclusive'], ['new', 'new']].map(([k, label]) => (
+          <div key={k} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <Badge tone={tone(k)}>{rt.verdicts?.[k] ?? 0}</Badge>
+            <span style={{ fontSize: 12, opacity: 0.75 }}>{label}</span>
+          </div>
+        ))}
+        <div style={{ flex: 1 }} />
+        <button className="ghost" onClick={genReport}>Retest report (PDF)</button>
+      </div>
+      {rt.severity_changes?.length ? (
+        <div style={{ padding: '0 16px 10px', fontSize: 12, opacity: 0.8 }}>
+          Severity changes: {rt.severity_changes.map((c: any) => `${c.fid} ${c.from}→${c.to}`).join(' · ')}
+        </div>
+      ) : null}
+      <DataTable
+        rows={rt.items}
+        empty="No verdicts."
+        cols={[
+          { key: 'fid', label: 'FID', render: (i: any) => <span className="mono">{i.fid}</span> },
+          { key: 'verdict', label: 'Verdict', render: (i: any) => <Badge tone={tone(i.verdict)}>{String(i.verdict).toUpperCase()}</Badge> },
+          { key: 'sev', label: 'Severity', render: (i: any) => <SevBadge sev={i.severity} /> },
+          { key: 'check', label: 'Check', render: (i: any) => <span className="mono">{i.check_id}</span> },
+          { key: 'title', label: 'Title' },
+          { key: 'ep', label: 'Endpoint', render: (i: any) => <span className="mono" style={{ fontSize: 11 }}>{i.endpoint || '—'}</span> },
+        ]}
+        onRow={(i: any) => navigate(i.retest_finding_id ? `/findings/${i.retest_finding_id}` : `/findings/${i.source_finding_id}`)}
+      />
+    </Panel>
+  );
+}
+
 export function JobDetailView({ id }: { id: string }) {
   const { navigate, toast } = useApp();
   const job = useAsync(() => api<{ job: Job }>(`/api/v1/jobs/${id}`), [id]);
@@ -149,6 +197,13 @@ export function JobDetailView({ id }: { id: string }) {
   const act = async (path: string, label: string) => {
     try { await api(path, { method: 'POST', body: {} }); toast(label); job.refresh(); }
     catch (e: any) { toast(e.message, 'err'); }
+  };
+  const doRetest = async () => {
+    try {
+      const r = await api<{ job: any }>(`/api/v1/jobs/${id}/retest`, { method: 'POST', body: {} });
+      toast('Retest queued — verifying fixes');
+      navigate(`/jobs/${r.job.id}`);
+    } catch (e: any) { toast(e.message, 'err'); }
   };
   if (job.loading) return <div className="loading"><span className="spinner" /> Loading job…</div>;
   if (job.error) return <Err error={job.error} />;
@@ -161,6 +216,7 @@ export function JobDetailView({ id }: { id: string }) {
         actions={<>
           {['RUNNING', 'QUEUED', 'ANALYZING', 'VALIDATING', 'REQUESTED'].includes(j.state) && <button className="danger" onClick={() => act(`/api/v1/jobs/${id}/cancel`, 'Cancel requested')}>Cancel</button>}
           {['FAILED', 'CANCELLED'].includes(j.state) && <button onClick={() => act(`/api/v1/jobs/${id}/retry`, 'Retry requested')}>Retry</button>}
+          {['COMPLETED', 'PARTIALLY_COMPLETED'].includes(j.state) && j.asset_id && <button className="primary" onClick={doRetest}>Retest — verify fixes</button>}
           <button className="ghost" onClick={() => navigate('/jobs')}>Back</button>
         </>}
       />
@@ -196,6 +252,7 @@ export function JobDetailView({ id }: { id: string }) {
         </Panel>
       </div>
       {j.error && <div className="notice err" style={{ marginTop: 14 }}><b>Error:</b> {j.error}</div>}
+      {(j.result_summary as any)?.retest?.retest_run_id && <div style={{ marginTop: 14 }}><RetestPanel runId={(j.result_summary as any).retest.retest_run_id} /></div>}
       <Panel title={`Findings (${findings.data?.findings.length ?? 0})`} pad={false} className="">
         <DataTable
           rows={findings.data?.findings}
@@ -207,6 +264,7 @@ export function JobDetailView({ id }: { id: string }) {
             { key: 'title', label: 'Title' },
             { key: 'check', label: 'Check', render: (f) => <span className="mono">{f.check_id}</span> },
             { key: 'conf', label: 'Confidence', render: (f) => <Badge tone="plain">{f.confidence}</Badge> },
+            { key: 'ver', label: 'Verification', render: (f) => <Badge tone={f.verification === 'fixed' ? 'ok' : f.verification === 'reproduced' ? 'err' : 'plain'}>{f.verification}</Badge> },
           ]}
           onRow={(f) => navigate(`/findings/${f.id}`)}
         />

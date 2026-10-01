@@ -98,3 +98,21 @@ headers on selected paths) so engines can be checked for false positives.
 `startFixture({ httpPort, tlsPort })` is exported for the integration test
 (`tests/integration-pipeline.test.js`), which runs the entire platform pipeline
 against a live instance on an ephemeral port.
+
+## Patched mode (test infrastructure)
+
+`FIXTURE_PATCHED="headers,exposure,sqlerrors,verbose_errors,hpp"` (or `all`) makes
+the fixture behave as if those vulnerability groups were **remediated**:
+
+| key | remediation applied |
+|---|---|
+| `headers` | HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, CSP present on every response |
+| `exposure` | `/admin`, `/backup.zip`, `/.env`, `/.git/HEAD` return 404 |
+| `sqlerrors` | quote-containing search input gets a sanitized 400 (no SQL echo) |
+| `verbose_errors` | `/error` and the garbage-sid path return sanitized pages (no stack traces / state dumps) |
+| `hpp` | only the first `q` parameter value is processed |
+
+The flag is read **per request**, so a test can enable remediation on a running
+instance between the source assessment and the retest — proving that retest
+FIXED verdicts reflect real behaviour changes, not test doubles. Never enabled
+by the demo seed.

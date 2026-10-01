@@ -36,6 +36,26 @@ export function createFixtureApp() {
 
   const BANNER = '<!-- FIXTURE: deliberately vulnerable application for authorized testing only -->';
 
+  // ---- PATCHED MODE (test infrastructure) -------------------------------------
+  // FIXTURE_PATCHED="headers,exposure,sqlerrors,verbose_errors,hpp" or "all"
+  // makes the fixture behave as if those vulnerability groups were REMEDIATED
+  // (security headers present, sensitive files gone, sanitized errors, first
+  // parameter value only). Used by the retest engine tests to prove that FIXED
+  // verdicts reflect real behaviour changes. Read per-request on purpose so a
+  // test can flip remediation on the SAME running instance between the source
+  // run and the retest run. Never enabled by the demo seed.
+  const patched = (k) => {
+    const list = String(process.env.FIXTURE_PATCHED || '').split(',').map((s) => s.trim()).filter(Boolean);
+    return list.includes(k) || list.includes('all');
+  };
+  const PATCHED_HEADERS = {
+    'strict-transport-security': 'max-age=31536000; includeSubDomains',
+    'x-frame-options': 'DENY',
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'strict-origin-when-cross-origin',
+    'content-security-policy': "default-src 'self'; script-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'",
+  };
+
   const home = (sessUser) => `<!DOCTYPE html>
 <html lang="en"><head><title>Meridian Fixture Store — demo target</title><meta name="generator" content="FixtureCMS 2.3.1"><script src="https://cdn.example.com/jquery.min.js"></script>
 <link rel="stylesheet" href="http://cdn.example-assets.invalid/style.css">
@@ -106,7 +126,7 @@ ${comments.map((c) => `<div class="comment"><b>${c.author}</b>: ${c.text}</div>`
 
   async function searchHandler(query) {
     // VULNERABLE (fixture): every duplicate q value is processed and reflected (HTTP parameter pollution)
-    const q = query.getAll('q').join(' ') || '';
+    const q = patched('hpp') ? (query.get('q') || '') : (query.getAll('q').join(' ') || '');
 
     // VULNERABLE (fixture): unbounded recursive-descent "parser" — long input really exhausts the stack
     if (q.length > 8192) {
@@ -131,6 +151,7 @@ ${comments.map((c) => `<div class="comment"><b>${c.author}</b>: ${c.text}</div>`
 
     // vulnerable: value is concatenated into a "SQL query" — a quote breaks it
     if (/['"]/.test(q)) {
+      if (patched('sqlerrors')) return { status: 400, body: '<html><body><h1>Bad Request</h1><p>Invalid search term.</p></body></html>' };
       const body = `<html><body><h1>Error</h1><pre>sqlite3.OperationalError: near "${q.slice(0, 40)}": syntax error
 SQL: SELECT * FROM products WHERE name LIKE '%${q}%'</pre>${ssiOut ? `<pre>${ssiOut}</pre>` : ''}</body></html>`;
       return { status: 500, body };
@@ -141,7 +162,7 @@ SQL: SELECT * FROM products WHERE name LIKE '%${q}%'</pre>${ssiOut ? `<pre>${ssi
 
   async function handler(req, res) {
     const u = new URL(req.url, 'http://fixture.local');
-    const send = (status, body, headers = {}) => res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', ...headers }).end(body);
+    const send = (status, body, headers = {}) => res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', ...(patched('headers') ? PATCHED_HEADERS : {}), ...headers }).end(body);
     // VULNERABLE (fixture): technology/version banner disclosure
     res.setHeader('x-powered-by', 'FixtureCMS/2.3.1');
 
@@ -194,12 +215,16 @@ var liveSocket = new WebSocket('ws://fixture.local/socket');
 var authDb = indexedDB.open('auth-tokens', 1);
 `, { 'content-type': 'application/javascript' });
       case '/.git/HEAD':
+        if (patched('exposure')) return send(404, '<html><body><h1>404 Not Found</h1></body></html>');
         return send(200, 'ref: refs/heads/main\n', { 'content-type': 'text/plain' });
       case '/.env':
+        if (patched('exposure')) return send(404, '<html><body><h1>404 Not Found</h1></body></html>');
         return send(200, 'APP_ENV=production\nDB_PASSWORD=Sup3rS3cretFixture!\nSTRIPE_SECRET_KEY=sk_live_51FixtureDemoKeyA91xYz2\n', { 'content-type': 'text/plain' });
       case '/backup.zip':
+        if (patched('exposure')) return send(404, '<html><body><h1>404 Not Found</h1></body></html>');
         return send(200, Buffer.from('504b0304140000000800' + '00'.repeat(64), 'hex').toString('latin1'), { 'content-type': 'application/zip' });
       case '/admin':
+        if (patched('exposure')) return send(404, '<html><body><h1>404 Not Found</h1></body></html>');
         return send(200, `<html><body><h1>Admin Dashboard</h1><p>Users list: admin, alice, bob</p><a href="/">Manage</a></body></html>`);
       case '/search': {
         const r = await searchHandler(u.searchParams);
@@ -284,7 +309,10 @@ var authDb = indexedDB.open('auth-tokens', 1);
         const sid = (req.headers.cookie || '').match(/sid=([^;]*)/)?.[1];
         if (sid != null) {
           const sess = sessions.get(sid.trim());
-          if (!sess) throw new Error(`Invalid session state: ${JSON.stringify(sid)}`);
+          if (!sess) {
+            if (patched('verbose_errors')) return send(403, '<html><body><h1>Forbidden</h1></body></html>');
+            throw new Error(`Invalid session state: ${JSON.stringify(sid)}`);
+          }
           return send(200, `<html><body><h1>Account: ${sess.user}</h1><p>Role: ${sess.role}</p><a href="/logout">Logout</a></body></html>`);
         }
         return send(200, `<html><body><h1>Account</h1><p>Sign in to manage your account.</p><form action="/login" method="post"><input name="username" id="acct-user"><input type="password" name="password"><button>Sign in</button></form></body></html>`);
@@ -400,7 +428,7 @@ var authDb = indexedDB.open('auth-tokens', 1);
           return send(404, 'not found');
         }
         if (u.pathname === '/checkout') return send(200, checkoutPage());
-        if (u.pathname === '/error') return send(500, '<html><body><pre>Fatal error: Uncaught Exception in /var/www/html/app.php on line 42\nStack trace:\n#0 /var/www/html/index.php(10): app->run()</pre></body></html>');
+        if (u.pathname === '/error') return send(500, patched('verbose_errors') ? '<html><body><h1>Internal Server Error</h1></body></html>' : '<html><body><pre>Fatal error: Uncaught Exception in /var/www/html/app.php on line 42\nStack trace:\n#0 /var/www/html/index.php(10): app->run()</pre></body></html>');
         if (u.pathname === '/logo.png') return send(200, Buffer.from('89504e470d0a1a0a', 'hex'), { 'content-type': 'image/png' });
         return send(404, '<html><body>Not found</body></html>');
       }
