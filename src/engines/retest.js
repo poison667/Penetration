@@ -80,7 +80,7 @@ export function applyRetestVerdicts(db, job) {
 
     // the ORIGINAL finding record is the durable verdict carrier
     const patch = { verification: verdict, last_verified_at: nowIso(), verified_by_job_id: job.id, retest_verdict: verdict };
-    if (verdict === 'fixed') { patch.status = 'fixed'; patch.fixed_at = nowIso(); }
+    if (verdict === 'fixed') { patch.status = 'remediated'; patch.fixed_at = nowIso(); }
     if (verdict === 'reproduced') {
       patch.status = 'open';
       patch.last_seen_at = nowIso();

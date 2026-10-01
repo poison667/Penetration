@@ -16,3 +16,12 @@ REQUIREMENTS_COVERAGE_MATRIX.csv cross-reference these IDs.
 | **L-8** | **Data workbench operates on file-based datasets (CSV/XLSX/JSON), not federated databases.** | Upload → profile/cleanse/dedupe/transform/anomaly → download is fully implemented. Live database connectors are not part of this build. |
 | **L-9** | **Single-process deployment.** | API + worker share one process in `--mode=all` (or can be split). Horizontal scale-out (multiple workers on one store) is designed-for (lease-based queue) but not exercised at scale here. |
 | **L-10** | **Some security checks are profile-gated.** | Active/intrusive checks (raw-socket verb tampering, HTTP smuggling, overflow probes) only run in `standard`/`full` profiles against explicitly authorized assets, rate-limited, with destructive payloads blocked. Passive coverage still runs everywhere. This is a deliberate safety constraint, not a gap (D7). |
+
+- **Manual-work hub (v1.1.0):** manual findings are recorded as entered — the
+  tester, not an engine, is the measurement instrument (check kind
+  `assisted`); the platform enforces the evidence invariant (a tester note
+  and/or attached exchanges) but cannot independently verify a human's claim.
+  HAR import covers the standard HTTP Archive 1.2 format (browser DevTools,
+  Burp Suite, OWASP ZAP exports); proprietary Burp project XML and ZAP session
+  files are not parsed. Imported exchanges are evidence, not scans — they do
+  not create findings by themselves and are never counted as measurements.

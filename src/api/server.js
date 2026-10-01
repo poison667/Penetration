@@ -151,7 +151,7 @@ function buildOpenApi(router) {
   }
   return {
     openapi: '3.1.0',
-    info: { title: 'Meridian Platform API', version: '1.0.1', description: 'Unified audit, security assessment, monitoring, data & AI operations platform. Session bearer tokens or API keys (mk_...) are used for authentication.' },
+    info: { title: 'Meridian Platform API', version: '1.1.0', description: 'Unified audit, security assessment, monitoring, data & AI operations platform. Session bearer tokens or API keys (mk_...) are used for authentication.' },
     servers: [{ url: '/' }],
     components: { securitySchemes: { bearerAuth: { type: 'http', scheme: 'bearer' } } },
     paths,

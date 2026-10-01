@@ -7,6 +7,7 @@ import { recordAudit } from '#app/audit';
 import { serviceByKey, SERVICE_CATALOG, PLANS } from '#app/catalog';
 import { balanceOf, grantCredits } from '#app/billing';
 import { createServiceRequest, createRetestRequest } from '#worker/runner';
+import { createManualFinding, importHar } from '#app/manual';
 import { generateReport, generateRetestReport } from '#report/engine';
 import { nowIso, sha256 } from '#core/util';
 import { createRateLimiter } from './ratelimit.js';
@@ -345,10 +346,44 @@ export function registerCoreRoutes(router, app) {
   });
   router.patch('/api/v1/findings/:id', async (ctx) => {
     requireAuth(['findings:write'])(ctx);
-    const body = validate({ status: V.enum(['open', 'in_progress', 'remediated', 'false_positive', 'accepted_risk', 'retest_pending']).optional, verification: V.enum(['not_retested', 'retest_pending', 'verified_fixed', 'still_present']).optional, remediation_notes: V.string({ max: 4000 }).optional() }, ctx.body, { partial: true });
+    const body = validate({ status: V.enum(['open', 'in_progress', 'remediated', 'false_positive', 'accepted_risk', 'retest_pending']).optional, verification: V.enum(['not_retested', 'retest_pending', 'verified_fixed', 'still_present', 'reproduced', 'fixed', 'inconclusive']).optional, remediation_notes: V.string({ max: 4000 }).optional() }, ctx.body, { partial: true });
     const f = db.update('findings', ctx.tid, ctx.params.id, body);
     recordAudit(db.store, { tenantId: ctx.tid, actorType: 'user', actorId: ctx.auth.user.id, action: 'finding.updated', resource: 'finding', resourceId: f.id, detail: body });
     ctx.respond(200, { finding: findingSummary(f) });
+  });
+  router.post('/api/v1/findings/manual', async (ctx) => {
+    requireAuth(['findings:write'])(ctx);
+    const body = validate({
+      title: V.string({ max: 200 }), description: V.string({ max: 8192 }),
+      severity: V.enum(['critical', 'high', 'medium', 'low', 'info']),
+      check_id: V.string({ max: 12 }), asset_id: V.string({ max: 60 }),
+      target: V.string({ max: 300 }), endpoint: V.string({ max: 300 }), parameter: V.string({ max: 200 }),
+      cwe: V.string({ max: 20 }), owasp: V.string({ max: 12 }),
+      recommendation: V.string({ max: 4000 }), reproduction: V.string({ max: 4000 }),
+      http_exchange: V.any(), har_evidence_ids: V.any(),
+    }, ctx.body, { partial: true });
+    const f = createManualFinding({ db, tenantId: ctx.tid, userId: ctx.auth.user.id, body });
+    ctx.respond(201, { finding: findingSummary(f) });
+  });
+
+  // ---------------- MANUAL HUB: HAR IMPORTS ----------------
+  router.post('/api/v1/har-imports', async (ctx) => {
+    requireAuth(['findings:write'])(ctx);
+    const body = validate({ asset_id: V.string({ max: 60 }), har: V.any() }, ctx.body, { partial: true });
+    if (!body.har) throw badRequest('har (the parsed HAR document) is required');
+    const { import: imp, evidence } = importHar({ db, tenantId: ctx.tid, userId: ctx.auth.user.id, assetId: body.asset_id || null, har: body.har });
+    ctx.respond(201, { import: { id: imp.id, asset_id: imp.asset_id, stats: imp.stats, created_at: imp.created_at }, evidence: evidence.map((e) => ({ id: e.id, method: e.content.method, url: e.content.url, status: e.content.response.status, mime: e.content.response.mime })) });
+  });
+  router.get('/api/v1/har-imports', async (ctx) => {
+    requireAuth(['findings:read'])(ctx);
+    const { rows, total } = db.list('har_imports', ctx.tid, { limit: Math.min(100, Number(ctx.query.get('limit') || 50)) });
+    ctx.respond(200, { imports: rows.map((r) => ({ id: r.id, asset_id: r.asset_id, stats: r.stats, created_at: r.created_at, imported_by: r.imported_by })), total });
+  });
+  router.get('/api/v1/har-imports/:id', async (ctx) => {
+    requireAuth(['findings:read'])(ctx);
+    const r = db.byId('har_imports', ctx.tid, ctx.params.id);
+    if (!r) throw notFound('har import not found');
+    ctx.respond(200, { import: r });
   });
   router.get('/api/v1/evidence/:id', async (ctx) => {
     requireAuth(['evidence:read'])(ctx);
@@ -404,7 +439,7 @@ function jobSummary(j) {
   return { id: j.id, service_key: j.service_key, asset_id: j.asset_id, state: j.state, progress: j.progress, attempts: j.attempts, error: j.error, findings_count: j.result_summary?.findings_count ?? null, created_at: j.created_at, started_at: j.started_at, finished_at: j.finished_at, qc: j.qc ? { engines_run: j.qc.engines_run, engines_failed: j.qc.engines_failed, evidence_records: j.qc.evidence_records } : null };
 }
 function findingSummary(f) {
-  return { id: f.id, fid: f.fid, title: f.title, check_id: f.check_id, category: f.category_label || f.category, severity: f.severity, confidence: f.confidence, cwe: f.cwe, owasp: f.owasp, endpoint: f.endpoint, parameter: f.parameter, status: f.status, verification: f.verification, evidence_count: f.evidence_ids?.length || 0, detected_at: f.detected_at, asset_id: f.asset_id, job_id: f.job_id };
+  return { id: f.id, fid: f.fid, title: f.title, check_id: f.check_id, category: f.category_label || f.category, severity: f.severity, confidence: f.confidence, cwe: f.cwe, owasp: f.owasp, endpoint: f.endpoint, parameter: f.parameter, status: f.status, verification: f.verification, evidence_count: f.evidence_ids?.length || 0, detected_at: f.detected_at, asset_id: f.asset_id, job_id: f.job_id, source: f.provenance?.kind === 'manual' ? 'manual' : 'engine' };
 }
 function setSessionCookie(ctx, token) {
   ctx.res.setHeader('set-cookie', `meridian_session=${token}; Path=/api/v1; HttpOnly; SameSite=Strict; Max-Age=7200`);

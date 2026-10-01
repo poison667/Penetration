@@ -82,7 +82,7 @@ test('unit: verdict matrix — reproduced / fixed / inconclusive / new + FID inh
     assert.equal(updated('f_hashA').status, 'open');
     assert.equal(updated('f_hashA').reproduced_finding_id, 'f_A2');
     assert.equal(updated('f_hashB').verification, 'fixed');
-    assert.equal(updated('f_hashB').status, 'fixed');
+    assert.equal(updated('f_hashB').status, 'remediated');
     assert.ok(updated('f_hashB').fixed_at);
     assert.equal(updated('f_hashC').verification, 'inconclusive');
     assert.equal(updated('f_hashC').status, 'open', 'inconclusive must NOT claim fixed');
@@ -164,7 +164,7 @@ test('e2e: real fixture → real engines → remediation → retest verdicts + r
     // source findings carry the verdicts
     const fixedSrc = db.store.find('findings', (f) => f.job_id === src.id && f.verification === 'fixed');
     assert.equal(fixedSrc.length, v.fixed);
-    for (const f of fixedSrc) { assert.equal(f.status, 'fixed'); assert.ok(f.fixed_at); assert.ok(f.verified_by_job_id); }
+    for (const f of fixedSrc) { assert.equal(f.status, 'remediated'); assert.ok(f.fixed_at); assert.ok(f.verified_by_job_id); }
     const reprSrc = db.store.find('findings', (f) => f.job_id === src.id && f.verification === 'reproduced');
     assert.equal(reprSrc.length, v.reproduced);
 

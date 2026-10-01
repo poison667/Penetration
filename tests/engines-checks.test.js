@@ -4,8 +4,8 @@ import { CHECKS, CHECK_CATEGORIES, getCheck, checksByCategory } from '#checks';
 import fs from 'node:fs';
 import path from 'node:path';
 
-test('the catalogue defines all 176 checks with unique ids', () => {
-  assert.equal(CHECKS.length, 176);
+test('the catalogue defines all 180 checks with unique ids', () => {
+  assert.equal(CHECKS.length, 180);
   const ids = new Set(CHECKS.map((c) => c.id));
   assert.equal(ids.size, CHECKS.length, 'duplicate check ids');
 });
@@ -25,7 +25,7 @@ test('every check carries the mandatory metadata (id/cat/sev/kind/title/remediat
 
 test('check families match the security requirement categories', () => {
   const families = [...new Set(CHECKS.map((c) => c.id.split('-')[0]))].sort();
-  assert.deepEqual(families, ['A11Y', 'ATH', 'AUT', 'BIZ', 'CFG', 'CRP', 'DOS', 'H5', 'PAY', 'PRF', 'REC', 'SEO', 'SES', 'TLS', 'UPL', 'VAL']);
+  assert.deepEqual(families, ['A11Y', 'ATH', 'AUT', 'BIZ', 'CFG', 'CRP', 'DOS', 'H5', 'MAN', 'PAY', 'PRF', 'REC', 'SEO', 'SES', 'TLS', 'UPL', 'VAL']);
 });
 
 test('every catalogued check is wired into at least one engine', () => {
@@ -33,8 +33,12 @@ test('every catalogued check is wired into at least one engine', () => {
   for (const d of ['src/engines/web', 'src/engines/sec']) {
     for (const f of fs.readdirSync(d)) if (f.endsWith('.js')) engineSrc += fs.readFileSync(path.join(d, f), 'utf8');
   }
-  const unwired = CHECKS.filter((c) => !engineSrc.includes(`'${c.id}'`));
+  // kind 'assisted' checks (MAN-*) are performed by a human through the
+  // manual-work hub — by definition no engine reports them.
+  const unwired = CHECKS.filter((c) => c.kind !== 'assisted' && !engineSrc.includes(`'${c.id}'`));
   assert.deepEqual(unwired.map((c) => c.id), [], 'these checks have no engine reporting them');
+  const manual = CHECKS.filter((c) => c.id.startsWith('MAN-'));
+  assert.ok(manual.length === 4 && manual.every((c) => c.kind === 'assisted'), 'MAN-001..004 must exist as assisted checks');
 });
 
 test('getCheck and checksByCategory lookups agree with the catalogue', () => {

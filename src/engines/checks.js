@@ -23,6 +23,7 @@ export const CHECK_CATEGORIES = {
   seo: 'SEO',
   perf: 'Performance',
   a11y: 'Accessibility',
+  manual: 'Manual Testing',
 };
 
 /** c(...) builds a check with defaults. */
@@ -236,6 +237,15 @@ export const CHECKS = [
   c('A11Y-010', 'a11y', 'low', 'passive', null, null, 'Table accessibility missing', 'Add <caption> and th scope attributes.', 'A11Y/tables'),
   c('A11Y-011', 'a11y', 'low', 'passive', null, null, 'Skip link missing', 'Provide a skip-to-content link.', 'A11Y/skip-link'),
   c('A11Y-012', 'a11y', 'info', 'passive', null, null, 'Color contrast requires manual verification', 'Verify ≥ 4.5:1 contrast for text (browser-based measurement provider; see docs/LIMITATIONS.md).', 'A11Y/contrast'),
+
+  // ================= MANUAL TESTING (manual-work hub) =================
+  // Manual findings: entered by a human tester through the manual hub
+  // (direct entry or HAR/Burp/ZAP evidence import). kind = assisted:
+  // a person performs the test; the platform records and reports it.
+  c('MAN-001', 'manual', 'medium', 'assisted', null, null, 'Manually identified vulnerability', 'Remediate as described in the finding; verify the fix with a retest run.', 'MAN/hub/manual-vuln'),
+  c('MAN-002', 'manual', 'medium', 'assisted', null, null, 'Manually identified business-logic issue', 'Remediate the workflow flaw as described; verify with a retest and a manual walkthrough.', 'MAN/hub/bizlogic'),
+  c('MAN-003', 'manual', 'medium', 'assisted', null, null, 'Manually identified misconfiguration', 'Correct the configuration as described; verify with a retest run.', 'MAN/hub/config'),
+  c('MAN-004', 'manual', 'info', 'assisted', null, null, 'Manual observation / note', 'Review the observation and decide on follow-up (promote to a finding if applicable).', 'MAN/hub/observation'),
 ];
 
 export const CHECKS_BY_ID = Object.fromEntries(CHECKS.map((x) => [x.id, x]));

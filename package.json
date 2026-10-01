@@ -1,6 +1,6 @@
 {
   "name": "meridian-platform",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Meridian \u2014 unified web audit, authorized security assessment, monitoring, data & AI operations platform (backend: zero-dependency Node.js; client: React+TypeScript; desktop: Tauri for Windows/Linux)",

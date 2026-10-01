@@ -417,3 +417,39 @@ Verified end-to-end against the deliberately vulnerable fixture with its
 real verdicts (e.g. 66 findings → 62 reproduced / 4 fixed after remediating
 security headers). Tests: `tests/engines-retest.test.js` (unit verdict matrix
 + full e2e).
+
+## 13. Manual-work hub (v1.1.0)
+
+Real assessments combine automated scanning with manual testing. The manual hub
+gives manual work first-class records — same findings store, same FIDs, same
+evidence discipline, same reports.
+
+**Manual findings** — `POST /api/v1/findings/manual`
+(`findings:write`): a human-identified issue with `title`, `severity`,
+`description` (stored as the finding FACT *and* as a `manual_note` evidence
+record — no evidence-free findings), optional endpoint/parameter/CWE, optional
+pasted request/response (stored as an `http_exchange` evidence record), and
+optional `har_evidence_ids` linking imported HAR exchanges. Check ids
+`MAN-001` (vulnerability), `MAN-002` (business logic), `MAN-003`
+(misconfiguration), `MAN-004` (observation) — category `manual`, kind
+`assisted`: the person is the measurement instrument, the platform records and
+reports. Manual findings get a `MER-F-…` FID, a stable dedup hash, full triage
+(`PATCH /api/v1/findings/:id`) and appear in every report next to engine
+findings (Source column: MANUAL vs engine). Provenance records
+`kind: manual`, the tool and the entering user.
+
+**HAR import** — `POST /api/v1/har-imports` (`findings:write`): paste or
+upload a HAR 1.2 document (the export format of browser DevTools, Burp Suite
+and OWASP ZAP). Every HTTP exchange becomes a normal evidence record
+(`kind: har_exchange`, sha256-hashed, size-capped: 32 KiB bodies, 100 headers,
+500 entries) that you attach to manual findings via `har_evidence_ids`.
+`GET /api/v1/har-imports` lists imports; `GET /api/v1/har-imports/:id`
+returns the full import with its evidence ids.
+
+UI: Findings → **New manual finding** / **Import HAR**.
+
+Tests: `tests/manual-hub.test.js` — HAR parser (normalization, base64
+decoding, truncation, non-HAR rejection), manual-finding validation (evidence
+invariant, enums, FID/hash), and a full e2e: real traffic captured from the
+live fixture as a genuine HAR → imported over the real API → manual finding
+linked to it → findings list → asset report inclusion.

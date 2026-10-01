@@ -76,5 +76,5 @@ export const PREFIX = {
   workflows: 'wf', workflow_runs: 'wfr', schedules: 'sch', rules: 'rule', rule_runs: 'arun',
   webhook_endpoints: 'whk', credit_ledger: 'led', subscriptions: 'sub', invoices: 'inv',
   tickets: 'tix', ticket_messages: 'tmsg', notifications: 'ntf', tasks: 'task',
-  workflow_versions: 'wfver', retest_runs: 'rt',
+  workflow_versions: 'wfver', retest_runs: 'rt', har_imports: 'har',
 };

@@ -369,11 +369,17 @@ export function FindingsView({ filterSev }: { filterSev?: string }) {
   const [sev, setSev] = useState(filterSev || 'ALL');
   const [status, setStatus] = useState('open');
   const [q, setQ] = useState('');
+  const [manualOpen, setManualOpen] = useState(false);
+  const [harOpen, setHarOpen] = useState(false);
   const findings = useAsync(() => api<{ findings: Finding[]; total: number }>(`/api/v1/findings?limit=500${sev !== 'ALL' ? `&severity=${sev}` : ''}${status !== 'ALL' ? `&status=${status}` : ''}`), [sev, status]);
   const rows = (findings.data?.findings || []).filter((f) => !q || `${f.title} ${f.check_id} ${f.fid} ${f.endpoint || ''}`.toLowerCase().includes(q.toLowerCase()));
   return (
     <>
-      <PageHead title="Findings" desc="Structured, evidence-backed findings. Facts, inference and recommendations are kept separate by design." />
+      <PageHead title="Findings" desc="Structured, evidence-backed findings. Facts, inference and recommendations are kept separate by design."
+        actions={<>
+          <button onClick={() => setHarOpen(true)}>Import HAR</button>
+          <button className="primary" onClick={() => setManualOpen(true)}>New manual finding</button>
+        </>} />
       <div className="toolbar">
         <Chips options={[{ key: 'ALL', label: 'All' }, { key: 'critical', label: 'Critical' }, { key: 'high', label: 'High' }, { key: 'medium', label: 'Medium' }, { key: 'low', label: 'Low' }, { key: 'info', label: 'Info' }]} value={sev} onPick={setSev} />
         <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: 'auto' }}>
@@ -396,6 +402,7 @@ export function FindingsView({ filterSev }: { filterSev?: string }) {
             { key: 'cat', label: 'Category', render: (f) => f.category_label || f.category },
             { key: 'cwe', label: 'CWE', render: (f) => f.cwe ? <span className="mono">{f.cwe}</span> : '—' },
             { key: 'conf', label: 'Confidence', render: (f) => <Badge tone="plain">{f.confidence}</Badge> },
+            { key: 'src', label: 'Source', render: (f: any) => f.source === 'manual' ? <Badge tone="accent">MANUAL</Badge> : <Badge tone="plain">engine</Badge> },
             { key: 'status', label: 'Status', render: (f) => <StateBadge s={f.status} /> },
             { key: 'ev', label: 'Evidence', className: 'num', render: (f: any) => fmt.num(f.evidence_count) },
             { key: 'det', label: 'Detected', render: (f) => fmt.dt(f.detected_at) },
@@ -403,7 +410,127 @@ export function FindingsView({ filterSev }: { filterSev?: string }) {
           onRow={(f) => navigate(`/findings/${f.id}`)}
         />
       </Panel>
+      {manualOpen && <ManualFindingModal onClose={() => setManualOpen(false)} onSaved={(fid) => { setManualOpen(false); findings.refresh(); void fid; }} />}
+      {harOpen && <HarImportModal onClose={() => setHarOpen(false)} />}
     </>
+  );
+}
+
+function ManualFindingModal({ onClose, onSaved }: { onClose: () => void; onSaved: (fid: string) => void }) {
+  const { toast } = useApp();
+  const assets = useAsync(() => api<{ assets: any[] }>('/api/v1/assets?limit=100'), []);
+  const [title, setTitle] = useState('');
+  const [severity, setSeverity] = useState('medium');
+  const [checkId, setCheckId] = useState('MAN-001');
+  const [assetId, setAssetId] = useState('');
+  const [endpoint, setEndpoint] = useState('');
+  const [parameter, setParameter] = useState('');
+  const [description, setDescription] = useState('');
+  const [recommendation, setRecommendation] = useState('');
+  const [req, setReq] = useState('');
+  const [res, setRes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try {
+      let http_exchange: any = undefined;
+      if (req.trim() || res.trim()) {
+        const urlM = /(https?:\/\/\S+)/.exec(req);
+        const methodM = /^\s*([A-Z]+)\s+/.exec(req);
+        http_exchange = { request: { method: urlM && methodM ? methodM[1] : 'GET', url: urlM ? urlM[1] : 'manually captured', headers: null, body: null }, response: { status: 200, headers: null, body: res } };
+      }
+      const r = await api<{ finding: any }>('/api/v1/findings/manual', {
+        method: 'POST',
+        body: { title, severity, check_id: checkId, ...(assetId ? { asset_id: assetId } : {}), ...(endpoint ? { endpoint } : {}), ...(parameter ? { parameter } : {}), description, ...(recommendation ? { recommendation } : {}), ...(http_exchange ? { http_exchange } : {}) },
+      });
+      toast(`Manual finding ${r.finding.fid} recorded`);
+      onSaved(r.finding.fid);
+    } catch (e: any) { toast(e.message, 'err'); }
+    setBusy(false);
+  };
+  return (
+    <Modal title="New manual finding" onClose={onClose}
+      footer={<>
+        <button className="ghost" onClick={onClose}>Cancel</button>
+        <button className="primary" disabled={busy || title.trim().length < 4 || !description.trim()} onClick={save}>Record finding</button>
+      </>}>
+      <div className="form-row">
+        <Field label="Title" help="What did you find?"><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Reflected XSS in search" /></Field>
+        <Field label="Severity">
+          <select value={severity} onChange={(e) => setSeverity(e.target.value)}>{['critical', 'high', 'medium', 'low', 'info'].map((s) => <option key={s}>{s}</option>)}</select>
+        </Field>
+      </div>
+      <div className="form-row">
+        <Field label="Type">
+          <select value={checkId} onChange={(e) => setCheckId(e.target.value)}>
+            <option value="MAN-001">Vulnerability (manual)</option>
+            <option value="MAN-002">Business-logic issue (manual)</option>
+            <option value="MAN-003">Misconfiguration (manual)</option>
+            <option value="MAN-004">Observation / note</option>
+          </select>
+        </Field>
+        <Field label="Asset (optional)">
+          <select value={assetId} onChange={(e) => setAssetId(e.target.value)}>
+            <option value="">— none —</option>
+            {(assets.data?.assets || []).map((a: any) => <option key={a.id} value={a.id}>{a.identifier}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div className="form-row">
+        <Field label="Endpoint (optional)"><input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="/search" /></Field>
+        <Field label="Parameter (optional)"><input value={parameter} onChange={(e) => setParameter(e.target.value)} placeholder="q" /></Field>
+      </div>
+      <Field label="What did you observe?" help="Stored as the finding FACT and as an evidence note."><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} placeholder="Typing &lt;script&gt; in the search box reflects it unescaped…" /></Field>
+      <Field label="Recommendation (optional)"><textarea value={recommendation} onChange={(e) => setRecommendation(e.target.value)} rows={2} placeholder="HTML-encode all user input before rendering." /></Field>
+      <div className="section-label">Optional evidence — paste the raw request / response</div>
+      <div className="form-row">
+        <Field label="Request"><textarea value={req} onChange={(e) => setReq(e.target.value)} rows={4} placeholder={'GET /search?q=%3Cscript%3E HTTP/1.1\nHost: target'} /></Field>
+        <Field label="Response"><textarea value={res} onChange={(e) => setRes(e.target.value)} rows={4} placeholder={'HTTP/1.1 200 OK\n\n<html>…'} /></Field>
+      </div>
+    </Modal>
+  );
+}
+
+function HarImportModal({ onClose }: { onClose: () => void }) {
+  const { toast } = useApp();
+  const assets = useAsync(() => api<{ assets: any[] }>('/api/v1/assets?limit=100'), []);
+  const [assetId, setAssetId] = useState('');
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const doImport = async () => {
+    setBusy(true);
+    try {
+      const har = JSON.parse(text);
+      const r = await api<{ import: any; evidence: any[] }>('/api/v1/har-imports', { method: 'POST', body: { ...(assetId ? { asset_id: assetId } : {}), har } });
+      toast(`Imported ${r.evidence.length} HTTP exchanges as evidence — link them when recording a manual finding`);
+      onClose();
+    } catch (e: any) { toast(e.message, 'err'); }
+    setBusy(false);
+  };
+  return (
+    <Modal title="Import HAR (manual testing traffic)" onClose={onClose}
+      footer={<>
+        <button className="ghost" onClick={onClose}>Cancel</button>
+        <button className="primary" disabled={busy || !text.trim()} onClick={doImport}>Import</button>
+      </>}>
+      <p style={{ opacity: 0.75, fontSize: 13, marginTop: 0 }}>
+        Export HTTP traffic from your browser DevTools, Burp Suite or OWASP ZAP as <b>HAR</b> and paste it here.
+        Every exchange becomes an evidence record you can attach to manual findings.
+      </p>
+      <Field label="Attach to asset (optional)">
+        <select value={assetId} onChange={(e) => setAssetId(e.target.value)}>
+          <option value="">— none —</option>
+          {(assets.data?.assets || []).map((a: any) => <option key={a.id} value={a.id}>{a.identifier}</option>)}
+        </select>
+      </Field>
+      <Field label="HAR document (JSON)">
+        <input type="file" accept=".har,.json,application/json" onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) f.text().then(setText).catch(() => toast('could not read file', 'err'));
+        }} />
+      </Field>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={8} placeholder='{ "log": { "entries": [ … ] } }' className="mono" style={{ width: '100%' }} />
+    </Modal>
   );
 }
 
@@ -442,14 +569,15 @@ export function FindingDetailView({ id }: { id: string }) {
             ['Verification', f.verification],
             ['Detected', fmt.dt(f.detected_at)],
             ['Last seen', fmt.dt(f.last_seen_at)],
-            ['Job', <a href={`#/jobs/${f.job_id}`}>{f.job_id.slice(0, 14)}…</a>],
+            ['Job', f.job_id ? <a href={`#/jobs/${f.job_id}`}>{f.job_id.slice(0, 14)}…</a> : <Badge tone="accent">manual entry</Badge>],
           ]} />
         </Panel>
         <Panel title="Provenance">
           <KV rows={[
             ['Engine', <span className="mono">{f.provenance?.engine || '—'}</span>],
             ['Tool', <span className="mono">{f.provenance?.tool || '—'}</span>],
-            ['Kind', <Badge tone={f.provenance?.kind === 'measured' ? 'ok' : 'plain'}>{f.provenance?.kind || '—'}</Badge>],
+            ['Kind', <Badge tone={f.provenance?.kind === 'measured' ? 'ok' : f.provenance?.kind === 'manual' ? 'accent' : 'plain'}>{f.provenance?.kind || '—'}</Badge>],
+            ...(f.provenance?.entered_by ? ([['Entered by', <span className="mono">{f.provenance.entered_by}</span>]] as [string, React.ReactNode][]) : []),
             ['CWE', f.cwe || '—'],
             ['OWASP', f.owasp || '—'],
             ...(f.reproduction ? ([['Reproduction', <CodeBlock text={String(f.reproduction)} />]] as [string, React.ReactNode][]) : []),
