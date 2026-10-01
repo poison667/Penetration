@@ -1,0 +1,8 @@
+{
+  "name": "meridian-platform-desktop",
+  "productName": "Meridian Platform",
+  "version": "1.0.0",
+  "description": "Meridian Platform — unified web audit, authorized security assessment, monitoring, data & AI operations (desktop edition)",
+  "main": "main.cjs",
+  "private": true
+}
